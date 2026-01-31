@@ -1,3 +1,18 @@
+# 会自动执行。根据日志里的 workflow 配置，每 8 小时自动签到一次。
+
+  也就是一天签到 3 次，但实际上每个站一天只能签到一次，多余的会显示"今日已签到"跳过，不会重复领取。
+
+  ---
+  注意一个问题： GitHub Actions 有个限制——如果你的 Fork 仓库 60 天内没有任何活动（commit、issue 等），Actions 会被自动禁用。
+
+  日志里提到的 ACTIONS_TRIGGER_PAT 环境变量就是解决这个问题的。如果你想长期稳定运行，可以配一个：
+
+  1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+  2. 创建一个 token，权限给 Actions: Read and Write
+  3. 添加到 Environment secrets，Name 填 ACTIONS_TRIGGER_PAT
+
+  这样脚本会自动保持仓库活跃，防止被禁用。
+
 # newapi.ai 多账号自动签到
 
 用于公益站多账号每日签到。  
