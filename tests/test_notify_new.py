@@ -1,7 +1,7 @@
 """Tests for utils/notify.py"""
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,14 @@ def kit_no_config():
 def kit_with_pushplus():
     """NotificationKit with only PushPlus configured"""
     env = {"PUSHPLUS_TOKEN": "test_token"}
+    with patch.dict(os.environ, env, clear=True):
+        return NotificationKit()
+
+
+@pytest.fixture
+def kit_with_telegram():
+    """NotificationKit with only Telegram configured"""
+    env = {"TELEGRAM_BOT_TOKEN": "123:ABC", "TELEGRAM_CHAT_ID": "456"}
     with patch.dict(os.environ, env, clear=True):
         return NotificationKit()
 
@@ -54,6 +62,40 @@ class TestPushMessage:
         call_args = mock_post.call_args
         url = call_args[0][0] if call_args[0] else call_args[1].get("url", "")
         assert url.startswith("https://"), f"PushPlus URL should use HTTPS, got: {url}"
+
+
+class TestTelegram:
+    @patch("utils.notify.curl_requests.post")
+    def test_send_telegram_checks_response(self, mock_post, kit_with_telegram):
+        """Telegram should raise on API error"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": False, "description": "Bad Request: chat not found"}
+        mock_post.return_value = mock_response
+
+        with pytest.raises(RuntimeError, match="Telegram API error"):
+            kit_with_telegram.send_telegram("Title", "Content")
+
+    @patch("utils.notify.curl_requests.post")
+    def test_send_telegram_no_parse_mode(self, mock_post, kit_with_telegram):
+        """Telegram should not use parse_mode to avoid special char issues"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": True, "result": {}}
+        mock_post.return_value = mock_response
+
+        kit_with_telegram.send_telegram("Title", "Content with $100 and *bold*")
+        call_args = mock_post.call_args
+        data = call_args[1]["json"]
+        assert "parse_mode" not in data
+
+    @patch("utils.notify.curl_requests.post")
+    def test_send_telegram_success(self, mock_post, kit_with_telegram):
+        """Telegram should succeed when API returns ok"""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"ok": True, "result": {"message_id": 1}}
+        mock_post.return_value = mock_response
+
+        kit_with_telegram.send_telegram("Title", "Content")
+        mock_post.assert_called_once()
 
 
 class TestSendMethods:

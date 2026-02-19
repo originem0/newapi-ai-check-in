@@ -81,9 +81,15 @@ class NotificationKit:
 		if not self.telegram_bot_token or not self.telegram_chat_id:
 			raise ValueError('Telegram Bot Token or Chat ID not configured')
 
-		text = f'*{title}*\n{content}'
-		data = {'chat_id': self.telegram_chat_id, 'text': text, 'parse_mode': 'Markdown'}
-		curl_requests.post(f'https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage', json=data, timeout=30)
+		text = f'{title}\n\n{content}'
+		# 不使用 parse_mode 避免签到内容中的特殊字符（$*_[]等）导致解析失败
+		data = {'chat_id': self.telegram_chat_id, 'text': text}
+		response = curl_requests.post(
+			f'https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage', json=data, timeout=30
+		)
+		result = response.json()
+		if not result.get('ok'):
+			raise RuntimeError(f'Telegram API error: {result.get("description", "Unknown error")}')
 
 	def push_message(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
 		# 只尝试已配置的通知方式，跳过未配置的
