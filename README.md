@@ -23,12 +23,10 @@ Affs:
 - [WONG](https://wzw.pp.ua/register?aff=N6Q9)
 - [薄荷 API](https://x666.me/register?aff=dgzt)
 - [Huan API](https://ai.huan666.de/register?aff=qEnU)
-- [我爱996](https://529961.com/register?aff=HV76)
-- [莹のAPI](https://api.wpgzs.top/register?aff=56zr)
 - [KFC API](https://kfc-api.sxxe.net/register?aff=xPnf)
 - [B4U](https://b4u.qzz.io/register?aff=2NeT)
 - [Elysiver](https://elysiver.h-e.top/register?aff=5JsA)
-- [HotaruApi](https://api.hotaruapi.top/register?aff=q6xq)
+- [HotaruApi](https://hotaruapi.com/register?aff=q6xq)
 - [Neb](https://ai.zzhdsgsss.xyz/register?aff=tXKw)
 
 其它使用 `newapi.ai` 功能相似, 可自定义环境变量 `PROVIDERS` 支持或 `PR` 到仓库。
@@ -36,10 +34,11 @@ Affs:
 ## 功能特性
 
 - ✅ 单个/多账号自动签到
-- ✅ 多种机器人通知（可选）
+- ✅ 多种机器人通知（仅推送已配置的通知方式）
 - ✅ linux.do 登录认证
 - ✅ github 登录认证 (with OTP)
 - ✅ Cloudflare bypass
+- ✅ 日志中敏感信息脱敏
 
 ## 使用方法
 
@@ -298,8 +297,8 @@ Affs:
 配置步骤：
 
 1. 在仓库的 Settings -> Environments -> production -> Environment secrets 中添加上述环境变量
-2. 每个通知方式都是独立的，可以只配置你需要的推送方式
-3. 如果某个通知方式配置不正确或未配置，脚本会自动跳过该通知方式
+2. 每个通知方式都是独立的，只需配置你需要的推送方式
+3. 脚本只会尝试已配置的通知方式，未配置的会自动跳过（不会产生错误日志）
 
 ## 故障排除
 

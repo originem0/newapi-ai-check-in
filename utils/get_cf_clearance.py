@@ -8,9 +8,12 @@ Cloudflare cf_clearance cookie 获取模块
 from __future__ import annotations
 
 import tempfile
+
 from camoufox.async_api import AsyncCamoufox
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
+
 from utils.get_headers import get_browser_headers, print_browser_headers
+
 
 async def get_cf_clearance(
     url: str,

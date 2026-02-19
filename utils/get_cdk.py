@@ -10,13 +10,13 @@ CDK 获取模块
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generator, AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator, Generator
 
 from curl_cffi import requests as curl_requests
 
-from utils.http_utils import proxy_resolve, response_resolve
-from utils.get_headers import get_curl_cffi_impersonate
 from utils.get_cf_clearance import get_cf_clearance
+from utils.get_headers import get_curl_cffi_impersonate
+from utils.http_utils import proxy_resolve, response_resolve
 
 if TYPE_CHECKING:
     from utils.config import AccountConfig

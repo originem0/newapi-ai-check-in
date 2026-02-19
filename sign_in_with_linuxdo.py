@@ -5,10 +5,12 @@
 
 import json
 import os
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
+
 from camoufox.async_api import AsyncCamoufox
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
-from utils.browser_utils import filter_cookies, take_screenshot, save_page_content_to_file
+
+from utils.browser_utils import filter_cookies, save_page_content_to_file, take_screenshot
 from utils.config import ProviderConfig
 from utils.get_headers import get_browser_headers, print_browser_headers
 
@@ -200,6 +202,9 @@ class LinuxDoSignIn:
                             await take_screenshot(page, "auth_page_navigation_failed_bypass", self.account_name)
                             return False, {"error": "Linux.do authorization page navigation failed"}, None
 
+                    # 标记是否检测到 Cloudflare 验证页面（在授权按钮处理之前初始化）
+                    cloudflare_challenge_detected = False
+
                     try:
                         # 等待授权按钮出现，最多等待30秒
                         print(f"ℹ️ {self.account_name}: Waiting for authorization button...")
@@ -249,8 +254,6 @@ class LinuxDoSignIn:
                         return False, {"error": "Linux.do authorization failed"}, None
 
                     # 统一处理授权逻辑（无论是否通过缓存登录）
-                    # 标记是否检测到 Cloudflare 验证页面
-                    cloudflare_challenge_detected = False
 
                     try:
                         # 使用配置的 OAuth 回调路径匹配模式

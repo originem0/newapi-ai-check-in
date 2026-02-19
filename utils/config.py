@@ -6,15 +6,15 @@
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Generator, AsyncGenerator, List, Literal
+from typing import AsyncGenerator, Callable, Dict, Generator, List, Literal
 
-from utils.get_check_in_status import newapi_check_in_status
+from utils.constants import QUOTA_DIVISOR  # noqa: F401 - re-exported for backwards compatibility
 from utils.get_cdk import (
+    get_b4u_cdk,
     get_runawaytime_cdk,
     get_x666_cdk,
-    get_b4u_cdk,
 )
-
+from utils.get_check_in_status import newapi_check_in_status
 
 # 前向声明 AccountConfig 类型，用于类型注解
 # 实际的 AccountConfig 类在后面定义
@@ -40,7 +40,7 @@ class ProviderConfig:
     origin: str
     login_path: str = "/login"
     status_path: str = "/api/status"
-    auth_state_path: str = "api/oauth/state"
+    auth_state_path: str = "/api/oauth/state"
     check_in_path: str | Callable[[str, str | int], str] | None = None
     check_in_status: bool | CheckInStatusFunc = False  # 签到状态查询：True=标准检查，False=不检查，Callable=自定义函数
     user_info_path: str = "/api/user/self"
@@ -75,7 +75,7 @@ class ProviderConfig:
             origin=data["origin"],
             login_path=data.get("login_path", "/login"),
             status_path=data.get("status_path", "/api/status"),
-            auth_state_path=data.get("auth_state_path", "api/oauth/state"),
+            auth_state_path=data.get("auth_state_path", "/api/oauth/state"),
             check_in_path=data.get("check_in_path"),
             check_in_status=data.get("check_in_status", False),
             user_info_path=data.get("user_info_path", "/api/user/self"),

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from curl_cffi import requests as curl_requests
 
+from utils.constants import QUOTA_DIVISOR
 from utils.http_utils import proxy_resolve, response_resolve
 
 if TYPE_CHECKING:
@@ -74,7 +75,7 @@ def get_newapi_check_in_status(
                     checkin_count = stats.get("checkin_count", 0)
                     total_quota = stats.get("total_quota", 0)
 
-                    total_quota_display = round(total_quota / 500000, 2) if total_quota else 0
+                    total_quota_display = round(total_quota / QUOTA_DIVISOR, 2) if total_quota else 0
 
                     print(
                         f"📊 {account_name}: Check-in status - "

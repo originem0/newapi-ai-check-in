@@ -8,11 +8,13 @@ import hashlib
 import json
 import sys
 from datetime import datetime
+
 from dotenv import load_dotenv
+
+from checkin import CheckIn
+from utils.balance_hash import load_balance_hash, save_balance_hash
 from utils.config import AppConfig
 from utils.notify import notify
-from utils.balance_hash import load_balance_hash, save_balance_hash
-from checkin import CheckIn
 
 load_dotenv(override=True)
 

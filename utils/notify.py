@@ -41,7 +41,7 @@ class NotificationKit:
 			raise ValueError('PushPlus Token not configured')
 
 		data = {'token': self.pushplus_token, 'title': title, 'content': content, 'template': 'html'}
-		curl_requests.post('http://www.pushplus.plus/send', json=data, timeout=30)
+		curl_requests.post('https://www.pushplus.plus/send', json=data, timeout=30)
 
 	def send_serverPush(self, title: str, content: str):
 		if not self.server_push_key:
@@ -86,22 +86,37 @@ class NotificationKit:
 		curl_requests.post(f'https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage', json=data, timeout=30)
 
 	def push_message(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
-		notifications = [
-			('Email', lambda: self.send_email(title, content, msg_type)),
-			('PushPlus', lambda: self.send_pushplus(title, content)),
-			('Server Push', lambda: self.send_serverPush(title, content)),
-			('DingTalk', lambda: self.send_dingtalk(title, content)),
-			('Feishu', lambda: self.send_feishu(title, content)),
-			('WeChat Work', lambda: self.send_wecom(title, content)),
-			('Telegram', lambda: self.send_telegram(title, content)),
-		]
+		# 只尝试已配置的通知方式，跳过未配置的
+		notifications = []
+		if self.email_user and self.email_pass and self.email_to:
+			notifications.append(('Email', lambda: self.send_email(title, content, msg_type)))
+		if self.pushplus_token:
+			notifications.append(('PushPlus', lambda: self.send_pushplus(title, content)))
+		if self.server_push_key:
+			notifications.append(('Server Push', lambda: self.send_serverPush(title, content)))
+		if self.dingding_webhook:
+			notifications.append(('DingTalk', lambda: self.send_dingtalk(title, content)))
+		if self.feishu_webhook:
+			notifications.append(('Feishu', lambda: self.send_feishu(title, content)))
+		if self.weixin_webhook:
+			notifications.append(('WeChat Work', lambda: self.send_wecom(title, content)))
+		if self.telegram_bot_token and self.telegram_chat_id:
+			notifications.append(('Telegram', lambda: self.send_telegram(title, content)))
 
+		if not notifications:
+			print('⚠️ No notification methods configured, skipping push')
+			return
+
+		success_count = 0
 		for name, func in notifications:
 			try:
 				func()
+				success_count += 1
 				print(f'🔹 [{name}]: Message push successful!')
 			except Exception as e:
 				print(f'🔸 [{name}]: Message push failed! Reason: {str(e)}')
+
+		print(f'📬 Notification summary: {success_count}/{len(notifications)} methods successful')
 
 
 notify = NotificationKit()

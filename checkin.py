@@ -4,21 +4,23 @@ CheckIn 类
 """
 
 import asyncio
-import json
-import inspect
 import hashlib
+import inspect
+import json
 import os
 import tempfile
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlencode, urlparse
 
-from curl_cffi import requests as curl_requests
 from camoufox.async_api import AsyncCamoufox
-from utils.config import AccountConfig, ProviderConfig
-from utils.browser_utils import parse_cookies, get_random_user_agent, take_screenshot, aliyun_captcha_check
+from curl_cffi import requests as curl_requests
+
+from utils.browser_utils import aliyun_captcha_check, get_random_user_agent, parse_cookies, take_screenshot
+from utils.config import QUOTA_DIVISOR, AccountConfig, ProviderConfig
 from utils.get_cf_clearance import get_cf_clearance
+from utils.get_headers import get_curl_cffi_impersonate
 from utils.http_utils import proxy_resolve, response_resolve
 from utils.topup import topup
-from utils.get_headers import get_curl_cffi_impersonate
+
 
 class CheckIn:
     """newapi.ai 签到管理类"""
@@ -97,7 +99,7 @@ class CheckIn:
                     for cookie in cookies:
                         cookie_name = cookie.get("name")
                         cookie_value = cookie.get("value")
-                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value})")
+                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value[:8]}{'***' if len(str(cookie_value)) > 8 else ''})")
                         if cookie_name in ["acw_tc", "cdn_sec_tc", "acw_sc__v2"] and cookie_value is not None:
                             waf_cookies[cookie_name] = cookie_value
 
@@ -260,7 +262,7 @@ class CheckIn:
                     for cookie in cookies:
                         cookie_name = cookie.get("name")
                         cookie_value = cookie.get("value")
-                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value})")
+                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value[:8]}{'***' if len(str(cookie_value)) > 8 else ''})")
                         # if cookie_name in ["acw_tc", "cdn_sec_tc", "acw_sc__v2"]
                         # and cookie_value is not None:
                         aliyun_captcha_cookies[cookie_name] = cookie_value
@@ -546,8 +548,7 @@ class CheckIn:
                         
                         print(
                             f"  📚 Cookie: {cookie.name} (Domain: {cookie.domain}, "
-                            f"Path: {cookie.path}, Expires: {cookie.expires}, "
-                            f"HttpOnly: {http_only}, Secure: {secure}, "
+                            f"Path: {cookie.path}, Secure: {secure}, "
                             f"SameSite: {same_site})"
                         )
                         # 构建 cookie 字典，Camoufox 要求字段类型严格
@@ -641,9 +642,9 @@ class CheckIn:
 
                     if response and "data" in response:
                         user_data = response.get("data", {})
-                        quota = round(user_data.get("quota", 0) / 500000, 2)
-                        used_quota = round(user_data.get("used_quota", 0) / 500000, 2)
-                        bonus_quota = round(user_data.get("bonus_quota", 0) / 500000, 2)
+                        quota = round(user_data.get("quota", 0) / QUOTA_DIVISOR, 2)
+                        used_quota = round(user_data.get("used_quota", 0) / QUOTA_DIVISOR, 2)
+                        bonus_quota = round(user_data.get("bonus_quota", 0) / QUOTA_DIVISOR, 2)
                         print(
                             f"✅ {self.account_name}: "
                             f"Current balance: ${quota}, Used: ${used_quota}, Bonus: ${bonus_quota}"
@@ -698,9 +699,9 @@ class CheckIn:
 
                 if json_data.get("success"):
                     user_data = json_data.get("data", {})
-                    quota = round(user_data.get("quota", 0) / 500000, 2)
-                    used_quota = round(user_data.get("used_quota", 0) / 500000, 2)
-                    bonus_quota = round(user_data.get("bonus_quota", 0) / 500000, 2)
+                    quota = round(user_data.get("quota", 0) / QUOTA_DIVISOR, 2)
+                    used_quota = round(user_data.get("used_quota", 0) / QUOTA_DIVISOR, 2)
+                    bonus_quota = round(user_data.get("bonus_quota", 0) / QUOTA_DIVISOR, 2)
                     return {
                         "success": True,
                         "quota": quota,
@@ -777,7 +778,7 @@ class CheckIn:
                 quota_awarded = check_in_data.get("quota_awarded", 0)
                 
                 if quota_awarded:
-                    quota_display = round(quota_awarded / 500000, 2)
+                    quota_display = round(quota_awarded / QUOTA_DIVISOR, 2)
                     print(f"✅ {self.account_name}: Check-in successful! Date: {checkin_date}, Quota awarded: ${quota_display}")
                 else:
                     print(f"✅ {self.account_name}: Check-in successful! {message}")
@@ -954,7 +955,7 @@ class CheckIn:
             # 打印 cookies 的键和值
             print(f"ℹ️ {self.account_name}: Cookies to be used:")
             for key, value in cookies.items():
-                print(f"  📚 {key}: {value[:50] if len(value) > 50 else value}{'...' if len(value) > 50 else ''}")
+                print(f"  📚 {key}: {value[:8]}***")
             session.cookies.update(cookies)
 
             # 使用传入的公用请求头，并添加动态头部

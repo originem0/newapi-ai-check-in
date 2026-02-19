@@ -16,8 +16,8 @@ def load_balance_hash(balance_hash_file: str) -> str | None:
         if os.path.exists(balance_hash_file):
             with open(balance_hash_file, "r", encoding="utf-8") as f:
                 return f.read().strip()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: Failed to load balance hash: {e}")
     return None
 
 
