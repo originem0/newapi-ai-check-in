@@ -13,6 +13,7 @@ from linuxdo_read_posts import (
     ReadRuntimeState,
     classify_read_error,
     extract_topic_candidates,
+    extract_topic_candidates_from_api,
     get_bool_env,
     get_int_env,
     load_linuxdo_accounts,
@@ -185,3 +186,18 @@ class TestExtractTopicCandidates:
         hrefs = ['/latest', '/categories', '/u/test', 'https://linux.do/c/general/1']
         candidates = extract_topic_candidates(hrefs)
         assert candidates == []
+
+
+class TestExtractTopicCandidatesFromApi:
+    def test_extracts_regular_visible_topics(self):
+        payload = {
+            'topic_list': {
+                'topics': [
+                    {'id': 123, 'slug': 'hello-world', 'visible': True, 'archetype': 'regular'},
+                    {'id': 456, 'slug': 'hidden', 'visible': False, 'archetype': 'regular'},
+                    {'id': 789, 'slug': 'private-message', 'visible': True, 'archetype': 'private_message'},
+                ]
+            }
+        }
+        candidates = extract_topic_candidates_from_api(payload)
+        assert candidates == [(123, 'https://linux.do/t/hello-world/123')]

@@ -176,6 +176,35 @@ def extract_topic_candidates(hrefs: list[str], origin: str = 'https://linux.do')
     return candidates
 
 
+def extract_topic_candidates_from_api(payload: dict, origin: str = 'https://linux.do') -> list[tuple[int, str]]:
+    """从 Discourse 列表 JSON 中提取 topic 候选。"""
+    candidates: list[tuple[int, str]] = []
+    seen_ids: set[int] = set()
+
+    topic_list = payload.get('topic_list', {}) if isinstance(payload, dict) else {}
+    topics = topic_list.get('topics', []) if isinstance(topic_list, dict) else []
+
+    for topic in topics:
+        if not isinstance(topic, dict):
+            continue
+        topic_id = topic.get('id')
+        slug = topic.get('slug')
+        visible = topic.get('visible', True)
+        archetype = topic.get('archetype', 'regular')
+
+        if not topic_id or not slug or visible is False:
+            continue
+        if archetype != 'regular':
+            continue
+        if topic_id in seen_ids:
+            continue
+
+        seen_ids.add(topic_id)
+        candidates.append((int(topic_id), f'{origin}/t/{slug}/{topic_id}'))
+
+    return candidates
+
+
 def load_linuxdo_accounts() -> list[dict]:
     """从 ACCOUNTS_LINUX_DO 或 ACCOUNTS 加载 Linux.do 账号。"""
     accounts_str = os.getenv('ACCOUNTS_LINUX_DO') or os.getenv('ACCOUNTS')
@@ -390,65 +419,95 @@ class LinuxDoReadPosts:
         self._last_discovery_debug: dict[str, dict] = {}
 
         for candidate_page in candidate_pages:
+            page_key = candidate_page.rsplit('/', 1)[-1]
             try:
                 print(f'ℹ️ {self.username}: Discovering topics from {candidate_page}')
-                await page.goto(candidate_page, wait_until='domcontentloaded')
-                try:
-                    await page.wait_for_selector(
-                        'tbody.topic-list-body tr.topic-list-item, .topic-list, .discovery-list-container, a[href*="/t/"]',
-                        timeout=12000,
-                    )
-                except Exception:
-                    await page.wait_for_timeout(3000)
-
-                hrefs = await page.evaluate(
-                    """() => {
-                        const preciseSelectors = [
-                            'tbody.topic-list-body tr.topic-list-item a.title',
-                            'tbody.topic-list-body tr.topic-list-item a.raw-topic-link',
-                            'tr.topic-list-item a.title',
-                            '.latest-topic-list-item a.title',
-                            '.topic-list .main-link a.title',
-                        ];
-
-                        const hrefs = [];
-                        const seen = new Set();
-
-                        for (const selector of preciseSelectors) {
-                            for (const anchor of document.querySelectorAll(selector)) {
-                                const href = anchor.getAttribute('href') || '';
-                                if (!href || seen.has(href)) continue;
-                                seen.add(href);
-                                hrefs.push(href);
-                            }
-                        }
-
-                        if (hrefs.length === 0) {
-                            for (const anchor of document.querySelectorAll('a[href*="/t/"]')) {
-                                const href = anchor.getAttribute('href') || '';
-                                if (!href || seen.has(href)) continue;
-                                seen.add(href);
-                                hrefs.push(href);
-                            }
-                        }
-
-                        return hrefs;
-                    }"""
+                api_payload = await page.evaluate(
+                    f"""async () => {{
+                        try {{
+                            const response = await fetch('{candidate_page}.json', {{
+                                method: 'GET',
+                                credentials: 'include',
+                                headers: {{ 'accept': 'application/json, text/plain, */*' }},
+                            }});
+                            const text = await response.text();
+                            try {{
+                                const data = JSON.parse(text);
+                                return {{ success: response.ok, status: response.status, data }};
+                            }} catch {{
+                                return {{ success: false, status: response.status, text }};
+                            }}
+                        }} catch (e) {{
+                            return {{ success: false, error: e.message }};
+                        }}
+                    }}"""
                 )
-                page_candidates = extract_topic_candidates(hrefs)
-                if not page_candidates:
-                    await page.evaluate('window.scrollBy(0, window.innerHeight)')
-                    await page.wait_for_timeout(1500)
+
+                page_candidates: list[tuple[int, str]] = []
+                if isinstance(api_payload, dict) and api_payload.get('success') and isinstance(api_payload.get('data'), dict):
+                    page_candidates = extract_topic_candidates_from_api(api_payload['data'])
+                    print(f'ℹ️ {self.username}: API discovery [{page_key}] found {len(page_candidates)} candidates')
+                else:
+                    print(f'⚠️ {self.username}: API discovery [{page_key}] failed or returned non-topic payload, falling back to DOM')
+                    await page.goto(candidate_page, wait_until='domcontentloaded')
+                    try:
+                        await page.wait_for_selector(
+                            'tbody.topic-list-body tr.topic-list-item, .topic-list, .discovery-list-container, a[href*="/t/"]',
+                            timeout=12000,
+                        )
+                    except Exception:
+                        await page.wait_for_timeout(3000)
+
                     hrefs = await page.evaluate(
-                        """() => Array.from(document.querySelectorAll('a[href*="/t/"]'))
-                        .map(a => a.getAttribute('href') || '')
-                        """
+                        """() => {
+                            const preciseSelectors = [
+                                'tbody.topic-list-body tr.topic-list-item a.title',
+                                'tbody.topic-list-body tr.topic-list-item a.raw-topic-link',
+                                'tr.topic-list-item a.title',
+                                '.latest-topic-list-item a.title',
+                                '.topic-list .main-link a.title',
+                            ];
+
+                            const hrefs = [];
+                            const seen = new Set();
+
+                            for (const selector of preciseSelectors) {
+                                for (const anchor of document.querySelectorAll(selector)) {
+                                    const href = anchor.getAttribute('href') || '';
+                                    if (!href || seen.has(href)) continue;
+                                    seen.add(href);
+                                    hrefs.push(href);
+                                }
+                            }
+
+                            if (hrefs.length === 0) {
+                                for (const anchor of document.querySelectorAll('a[href*="/t/"]')) {
+                                    const href = anchor.getAttribute('href') || '';
+                                    if (!href || seen.has(href)) continue;
+                                    seen.add(href);
+                                    hrefs.push(href);
+                                }
+                            }
+
+                            return hrefs;
+                        }"""
                     )
                     page_candidates = extract_topic_candidates(hrefs)
+                    if not page_candidates:
+                        await page.evaluate('window.scrollBy(0, window.innerHeight)')
+                        await page.wait_for_timeout(1500)
+                        hrefs = await page.evaluate(
+                            """() => Array.from(document.querySelectorAll('a[href*="/t/"]'))
+                            .map(a => a.getAttribute('href') || '')
+                            """
+                        )
+                        page_candidates = extract_topic_candidates(hrefs)
 
-                page_key = candidate_page.rsplit('/', 1)[-1]
                 discovery_counts[page_key] = len(page_candidates)
                 self._last_discovery_debug[page_key] = await self._collect_discovery_debug(page, page_key, len(page_candidates))
+                if isinstance(api_payload, dict):
+                    self._last_discovery_debug[page_key]['api_status'] = api_payload.get('status')
+                    self._last_discovery_debug[page_key]['api_success'] = api_payload.get('success', False)
 
                 if len(page_candidates) == 0:
                     await save_page_content_to_file(page, f'discovery_{page_key}_empty', self.username, prefix='linuxdo')
@@ -464,7 +523,6 @@ class LinuxDoReadPosts:
                         return collected, discovery_counts
             except Exception as e:
                 print(f'⚠️ {self.username}: Failed to discover topics from {candidate_page}: {e}')
-                page_key = candidate_page.rsplit('/', 1)[-1]
                 discovery_counts[page_key] = 0
                 self._last_discovery_debug[page_key] = {'error': str(e)}
 
