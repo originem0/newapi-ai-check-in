@@ -419,6 +419,13 @@ DEBUG_ARTIFACTS=true
 
 如果发现旧版 txt 缓存，脚本会自动迁移到新的 JSON 状态文件。
 
+另外，当前版本增加了**坏区间自恢复**逻辑：
+
+- 如果缓存游标相对 `LINUXDO_BASE_TOPIC_ID` 漂移过大
+- 且本轮一个有效 topic 都没有读到
+
+脚本会自动回退到 base 区间并重试一次，避免长期卡死在无效 topic 区间。
+
 #### 读帖任务的结果解释
 
 - `uncertain`

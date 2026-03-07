@@ -39,6 +39,7 @@ DEFAULT_BASE_TOPIC_ID_END = 1_100_000
 DEFAULT_MAX_POSTS = 100
 DEFAULT_MAX_TOPIC_ATTEMPTS = 60
 DEFAULT_MAX_RUNTIME_SECONDS = 900
+DEFAULT_MAX_TOPIC_DRIFT_FROM_BASE = 50_000
 
 
 TopicStatus = Literal['valid', 'invalid', 'error', 'challenge', 'unknown']
@@ -79,6 +80,7 @@ class ReadAccountResult:
     error: str | None = None
     topic_visits: list[TopicVisitResult] = field(default_factory=list)
     duration_seconds: int = 0
+    reset_to_base_retry: bool = False
 
 
 def classify_read_error(error: Exception | str) -> str:
@@ -108,6 +110,15 @@ def get_int_env(name: str, default: int) -> int:
     except ValueError:
         print(f'⚠️ Invalid integer for {name}: {raw!r}, using default {default}')
         return default
+
+
+def should_retry_from_base(state: ReadRuntimeState, base_topic_id: int, valid_topics: int) -> bool:
+    """当缓存游标明显漂移且本轮一个有效帖子都没读到时，决定是否回退到 base 重试。"""
+    if valid_topics > 0:
+        return False
+    if state.last_topic_id <= 0:
+        return False
+    return state.last_topic_id > base_topic_id + DEFAULT_MAX_TOPIC_DRIFT_FROM_BASE
 
 
 def load_linuxdo_accounts() -> list[dict]:
@@ -189,7 +200,7 @@ class LinuxDoReadPosts:
                 if raw.isdigit():
                     topic_id = int(raw)
                     print(f'ℹ️ {self.username}: Migrating legacy topic cache from txt to json state')
-                    state = ReadRuntimeState(last_topic_id=topic_id, last_success_topic_id=topic_id)
+                    state = ReadRuntimeState(last_topic_id=topic_id, last_success_topic_id=0)
                     self._save_topic_state(state)
                     return state
         except Exception as e:
@@ -343,6 +354,8 @@ class LinuxDoReadPosts:
         max_runtime_seconds: int,
     ) -> tuple[ReadRuntimeState, list[TopicVisitResult]]:
         state = self._load_topic_state()
+        state.attempted_count = 0
+        state.invalid_streak = 0
         state.last_topic_id = max(base_topic_id, state.last_topic_id)
         print(
             f'ℹ️ {self.username}: Starting from topic ID {state.last_topic_id} '
@@ -430,6 +443,22 @@ class LinuxDoReadPosts:
                     max_topic_attempts=max_topic_attempts,
                     max_runtime_seconds=max_runtime_seconds,
                 )
+
+                if should_retry_from_base(state, base_topic_id, len([visit for visit in topic_visits if visit.status == 'valid'])):
+                    print(
+                        f'⚠️ {self.username}: Cached topic range appears unhealthy '
+                        f'(last_topic_id={state.last_topic_id}, base={base_topic_id}), retrying once from base range'
+                    )
+                    result.reset_to_base_retry = True
+                    reset_state = ReadRuntimeState(last_topic_id=base_topic_id, last_success_topic_id=0)
+                    self._save_topic_state(reset_state)
+                    state, topic_visits = await self._read_posts(
+                        page=page,
+                        base_topic_id=base_topic_id,
+                        max_posts=max_posts,
+                        max_topic_attempts=max_topic_attempts,
+                        max_runtime_seconds=max_runtime_seconds,
+                    )
 
                 result.topic_visits = topic_visits
                 result.topics_attempted = len(topic_visits)

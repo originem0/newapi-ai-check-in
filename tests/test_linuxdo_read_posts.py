@@ -14,6 +14,7 @@ from linuxdo_read_posts import (
     classify_read_error,
     get_int_env,
     load_linuxdo_accounts,
+    should_retry_from_base,
 )
 
 
@@ -117,7 +118,17 @@ class TestLegacyTopicStateMigration:
 
             loaded = reader._load_topic_state()
             assert loaded.last_topic_id == 456
-            assert loaded.last_success_topic_id == 456
+            assert loaded.last_success_topic_id == 0
             assert Path(reader.topic_state_path).exists()
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+
+class TestRetryFromBaseDecision:
+    def test_retries_when_no_valid_topics_and_cursor_far_ahead(self):
+        state = ReadRuntimeState(last_topic_id=200000, last_success_topic_id=0)
+        assert should_retry_from_base(state, base_topic_id=100000, valid_topics=0) is True
+
+    def test_does_not_retry_when_valid_topics_found(self):
+        state = ReadRuntimeState(last_topic_id=200000, last_success_topic_id=0)
+        assert should_retry_from_base(state, base_topic_id=100000, valid_topics=1) is False
