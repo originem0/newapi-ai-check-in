@@ -93,6 +93,23 @@ def classify_read_error(error: Exception | str) -> str:
     return message
 
 
+def get_int_env(name: str, default: int) -> int:
+    """读取整数环境变量；空字符串或非法值时回退默认值。"""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    raw = raw.strip()
+    if not raw:
+        return default
+
+    try:
+        return int(raw)
+    except ValueError:
+        print(f'⚠️ Invalid integer for {name}: {raw!r}, using default {default}')
+        return default
+
+
 def load_linuxdo_accounts() -> list[dict]:
     """从 ACCOUNTS_LINUX_DO 或 ACCOUNTS 加载 Linux.do 账号。"""
     accounts_str = os.getenv('ACCOUNTS_LINUX_DO') or os.getenv('ACCOUNTS')
@@ -163,6 +180,18 @@ class LinuxDoReadPosts:
                 with open(self.topic_state_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 return ReadRuntimeState(**data)
+
+            # 兼容旧版 txt 缓存
+            legacy_topic_id_path = os.path.join(self.topic_state_dir, f'{self.username_hash}_topic_id.txt')
+            if os.path.exists(legacy_topic_id_path):
+                with open(legacy_topic_id_path, 'r', encoding='utf-8') as f:
+                    raw = f.read().strip()
+                if raw.isdigit():
+                    topic_id = int(raw)
+                    print(f'ℹ️ {self.username}: Migrating legacy topic cache from txt to json state')
+                    state = ReadRuntimeState(last_topic_id=topic_id, last_success_topic_id=topic_id)
+                    self._save_topic_state(state)
+                    return state
         except Exception as e:
             print(f'⚠️ {self.username}: Failed to load topic state: {e}')
         return ReadRuntimeState()
@@ -354,11 +383,9 @@ class LinuxDoReadPosts:
     ) -> ReadAccountResult:
         print(f'ℹ️ {self.username}: Starting Linux.do read posts task')
 
-        base_topic_id_str = os.getenv('LINUXDO_BASE_TOPIC_ID', '')
-        base_topic_id = (
-            int(base_topic_id_str)
-            if base_topic_id_str
-            else random.randint(DEFAULT_BASE_TOPIC_ID_START, DEFAULT_BASE_TOPIC_ID_END)
+        base_topic_id = get_int_env(
+            'LINUXDO_BASE_TOPIC_ID',
+            random.randint(DEFAULT_BASE_TOPIC_ID_START, DEFAULT_BASE_TOPIC_ID_END),
         )
 
         result = ReadAccountResult(
@@ -463,9 +490,9 @@ async def main() -> int:
 
         reader = LinuxDoReadPosts(username=account['username'], password=account['password'])
         result = await reader.run(
-            max_posts=int(os.getenv('LINUXDO_MAX_POSTS', DEFAULT_MAX_POSTS)),
-            max_topic_attempts=int(os.getenv('LINUXDO_MAX_TOPIC_ATTEMPTS', DEFAULT_MAX_TOPIC_ATTEMPTS)),
-            max_runtime_seconds=int(os.getenv('LINUXDO_MAX_RUNTIME_SECONDS', DEFAULT_MAX_RUNTIME_SECONDS)),
+            max_posts=get_int_env('LINUXDO_MAX_POSTS', DEFAULT_MAX_POSTS),
+            max_topic_attempts=get_int_env('LINUXDO_MAX_TOPIC_ATTEMPTS', DEFAULT_MAX_TOPIC_ATTEMPTS),
+            max_runtime_seconds=get_int_env('LINUXDO_MAX_RUNTIME_SECONDS', DEFAULT_MAX_RUNTIME_SECONDS),
         )
         results.append(result)
         print(

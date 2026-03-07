@@ -8,7 +8,13 @@ import shutil
 import uuid
 from pathlib import Path
 
-from linuxdo_read_posts import LinuxDoReadPosts, ReadRuntimeState, classify_read_error, load_linuxdo_accounts
+from linuxdo_read_posts import (
+    LinuxDoReadPosts,
+    ReadRuntimeState,
+    classify_read_error,
+    get_int_env,
+    load_linuxdo_accounts,
+)
 
 
 class TestLoadLinuxdoAccounts:
@@ -70,3 +76,48 @@ class TestClassifyReadError:
 
     def test_timeout_error(self):
         assert classify_read_error('Operation timed out').startswith('Network timeout:')
+
+
+class TestIntEnv:
+    def test_empty_env_uses_default(self):
+        old_value = os.environ.get('LINUXDO_MAX_POSTS')
+        try:
+            os.environ['LINUXDO_MAX_POSTS'] = ''
+            assert get_int_env('LINUXDO_MAX_POSTS', 100) == 100
+        finally:
+            if old_value is None:
+                os.environ.pop('LINUXDO_MAX_POSTS', None)
+            else:
+                os.environ['LINUXDO_MAX_POSTS'] = old_value
+
+    def test_invalid_env_uses_default(self):
+        old_value = os.environ.get('LINUXDO_MAX_POSTS')
+        try:
+            os.environ['LINUXDO_MAX_POSTS'] = 'abc'
+            assert get_int_env('LINUXDO_MAX_POSTS', 100) == 100
+        finally:
+            if old_value is None:
+                os.environ.pop('LINUXDO_MAX_POSTS', None)
+            else:
+                os.environ['LINUXDO_MAX_POSTS'] = old_value
+
+
+class TestLegacyTopicStateMigration:
+    def test_loads_legacy_txt_cache(self):
+        root = Path('tests') / '_tmp_linuxdo_state_legacy' / uuid.uuid4().hex
+        storage_dir = root / 'storage'
+        topic_dir = root / 'topics'
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        topic_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            reader = LinuxDoReadPosts('user', 'pass', storage_state_dir=str(storage_dir), topic_state_dir=str(topic_dir))
+            legacy_path = topic_dir / f'{reader.username_hash}_topic_id.txt'
+            legacy_path.write_text('456', encoding='utf-8')
+
+            loaded = reader._load_topic_state()
+            assert loaded.last_topic_id == 456
+            assert loaded.last_success_topic_id == 456
+            assert Path(reader.topic_state_path).exists()
+        finally:
+            shutil.rmtree(root, ignore_errors=True)

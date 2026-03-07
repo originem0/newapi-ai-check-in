@@ -401,6 +401,24 @@ DEBUG_ARTIFACTS=true
 - `LINUXDO_MAX_RUNTIME_SECONDS`
 - `ALLOW_INTERACTIVE_AUTH`
 
+这些变量即使在 GitHub Actions 中被注入为空字符串，也会自动回退到默认值，不会再因为 `int('')` 之类的问题直接崩溃。
+
+#### 读帖状态缓存
+
+读帖任务现在使用 `linuxdo_reads/*.json` 存储结构化状态，包含：
+
+- `last_topic_id`
+- `last_success_topic_id`
+- `invalid_streak`
+- `attempted_count`
+- `last_run_at`
+
+同时兼容旧版缓存：
+
+- `linuxdo_reads/*_topic_id.txt`
+
+如果发现旧版 txt 缓存，脚本会自动迁移到新的 JSON 状态文件。
+
 #### 读帖任务的结果解释
 
 - `uncertain`

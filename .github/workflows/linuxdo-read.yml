@@ -113,7 +113,21 @@ jobs:
         # 列出 linuxdo_reads 目录文件
         if (Test-Path "linuxdo_reads") {
           echo "📁 linuxdo_reads 目录内容:"
-          Get-ChildItem -Path linuxdo_reads -File | ForEach-Object { echo "  - $($_.Name)" }
+          echo "旧版 txt 缓存:"
+          $txtFiles = Get-ChildItem -Path linuxdo_reads -Filter *.txt -File -ErrorAction SilentlyContinue
+          if ($txtFiles) {
+            $txtFiles | ForEach-Object { echo "  - $($_.Name)" }
+          } else {
+            echo "  (无)"
+          }
+          echo ""
+          echo "新版 json 状态缓存:"
+          $jsonFiles = Get-ChildItem -Path linuxdo_reads -Filter *.json -File -ErrorAction SilentlyContinue
+          if ($jsonFiles) {
+            $jsonFiles | ForEach-Object { echo "  - $($_.Name)" }
+          } else {
+            echo "  (无)"
+          }
         } else {
           echo "⚠️ linuxdo_reads 目录不存在"
         }
