@@ -8,7 +8,6 @@
 - 通过转盘 / 抽奖获得奖励
 - 通过 CDK 自动充值
 - cookies / GitHub / Linux.do 多种认证方式
-- Linux.do 读帖自动化任务
 
 > 注意：不同 provider 的奖励方式不同，并不都是“签到”。  
 > 例如：`x666 / 薄荷 API` 走的是 **up.x666.me 抽奖自动到账**，不是 `/api/user/checkin`。
@@ -74,22 +73,6 @@
 - 获取 CDK
 - 按顺序执行充值
 - 失败则停止后续充值
-
-### 5) Linux.do 读帖自动化
-
-仓库还包含独立的 Linux.do 自动读帖任务：
-
-- 尝试恢复 Linux.do 登录态
-- 自动浏览一批 topic
-- 输出页面行为结果
-- 严格区分：
-  - 页面行为成功
-  - 业务验证成功
-  - 无法验证（`uncertain`）
-  - 基础设施失败（`infra_failed`）
-
-> 重要：  
-> 当前版本**不能稳定从服务端证明“读帖任务已完成”**，所以读帖任务即使访问了一批有效帖子，也默认只会记为 `uncertain`，而不是完全成功。
 
 ---
 
@@ -377,79 +360,34 @@ DEBUG_ARTIFACTS=true
 - 支持 Cloudflare 挑战自动求解
 - 若自动求解失败且不允许交互式认证，会显式失败
 
-### Linux.do 读帖任务
+### Linux.do 读帖任务（待做）
 
-独立 workflow：
+仓库里保留了 Linux.do 读帖自动化相关脚本与 workflow，但**当前将其视为待做任务，不承诺可用性**。
+
+原因：
+
+- 目前仍缺少稳定、可信的服务端闭环验证，无法严格证明“读帖任务已完成”
+- Linux.do / Discourse 的页面结构、challenge、前端渲染与权限边界会影响候选发现稳定性
+- 现阶段更适合作为实验性代码和后续重构基础，而不是正式可依赖功能
+
+当前建议：
+
+- **不要把 Linux.do 读帖任务当作正式自动化能力使用**
+- 如需继续开发，请把它视为一个后续待完成模块
+- 真正恢复上线前，至少需要补齐：
+  - 候选发现稳定性验证
+  - 服务端结果闭环
+  - 更明确的成功判定标准
+  - 更完整的失败分类和监控
+
+独立 workflow 仍保留在：
 
 - `.github/workflows/linuxdo-read.yml`
 
-当前实现要点：
+但该 workflow 当前应理解为：
 
-- 读取 `ACCOUNTS_LINUX_DO`
-- 维护独立的 topic 状态缓存
-- 优先从 Linux.do 列表页发现当前账号可见的 topic 候选
-- 优先通过 `latest.json / new.json / top.json` 获取候选
-- 列表页发现会优先使用更精确的 topic 列表选择器，而不是直接抓全页面所有 `/t/` 链接
-- 只有当 JSON API discovery 失败或返回空时，才降级到 DOM discovery
-- 默认**不启用**旧的 topic ID 扫描 fallback
-- 只有显式设置 `LINUXDO_ENABLE_ID_FALLBACK=true` 时，才会启用旧的 ID 扫描策略
-- 使用更严格的结果模型：
-  - `uncertain`
-  - `failed`
-  - `infra_failed`
-
-#### 相关环境变量
-
-- `ACCOUNTS_LINUX_DO`
-- `LINUXDO_BASE_TOPIC_ID`
-- `LINUXDO_MAX_POSTS`
-- `LINUXDO_MAX_TOPIC_ATTEMPTS`
-- `LINUXDO_MAX_RUNTIME_SECONDS`
-- `LINUXDO_ENABLE_ID_FALLBACK`
-- `ALLOW_INTERACTIVE_AUTH`
-
-这些变量即使在 GitHub Actions 中被注入为空字符串，也会自动回退到默认值，不会再因为 `int('')` 之类的问题直接崩溃。
-
-其中：
-
-- `LINUXDO_ENABLE_ID_FALLBACK`
-  - 默认关闭
-  - 仅当列表页候选发现不足、且你明确允许时，才会启用旧版 topic ID 扫描
-
-#### 读帖状态缓存
-
-读帖任务现在使用 `linuxdo_reads/*.json` 存储结构化状态，包含：
-
-- `last_topic_id`
-- `last_success_topic_id`
-- `invalid_streak`
-- `attempted_count`
-- `last_run_at`
-
-同时兼容旧版缓存：
-
-- `linuxdo_reads/*_topic_id.txt`
-
-如果发现旧版 txt 缓存，脚本会自动迁移到新的 JSON 状态文件。
-
-另外，当前版本增加了**坏区间自恢复**逻辑：
-
-- 如果缓存游标相对 `LINUXDO_BASE_TOPIC_ID` 漂移过大
-- 且本轮一个有效 topic 都没有读到
-
-脚本会自动回退到 base 区间并重试一次，避免长期卡死在无效 topic 区间。
-
-#### 读帖任务的结果解释
-
-- `uncertain`
-  - 页面访问和滚动行为完成
-  - 但无法严格证明服务端已记录“读帖任务完成”
-- `failed`
-  - 没有读到有效帖子，或登录失败
-- `infra_failed`
-  - 网络、站点可达性、基础设施层失败
-
-这比旧版“自认为成功”更保守，也更诚实。
+- **实验性 / 待完成任务**
+- 不是主项目稳定能力的一部分
 
 ---
 
@@ -517,7 +455,9 @@ uv run pytest
 uv run main.py
 ```
 
-### 本地运行 Linux.do 读帖任务
+### 本地运行 Linux.do 读帖任务（实验）
+
+如需调试实验性代码，可手动运行：
 
 ```bash
 uv sync --dev
@@ -525,11 +465,11 @@ python -m camoufox fetch
 uv run python -u linuxdo_read_posts.py
 ```
 
-如果你要本地手动处理 challenge / 登录交互，可以临时打开：
+但请注意：
 
-```bash
-ALLOW_INTERACTIVE_AUTH=true
-```
+- 这是实验模块
+- 当前不保证业务结果可信
+- 仅适合本地调试、抓日志、验证后续重构思路
 
 ---
 

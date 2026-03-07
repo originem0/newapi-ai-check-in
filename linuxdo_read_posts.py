@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Literal
 
 from camoufox.async_api import AsyncCamoufox
+from curl_cffi import requests as curl_requests
 from dotenv import load_dotenv
 
 from utils.browser_utils import save_page_content_to_file, take_screenshot
@@ -422,26 +423,7 @@ class LinuxDoReadPosts:
             page_key = candidate_page.rsplit('/', 1)[-1]
             try:
                 print(f'ℹ️ {self.username}: Discovering topics from {candidate_page}')
-                api_payload = await page.evaluate(
-                    f"""async () => {{
-                        try {{
-                            const response = await fetch('{candidate_page}.json', {{
-                                method: 'GET',
-                                credentials: 'include',
-                                headers: {{ 'accept': 'application/json, text/plain, */*' }},
-                            }});
-                            const text = await response.text();
-                            try {{
-                                const data = JSON.parse(text);
-                                return {{ success: response.ok, status: response.status, data }};
-                            }} catch {{
-                                return {{ success: false, status: response.status, text }};
-                            }}
-                        }} catch (e) {{
-                            return {{ success: false, error: e.message }};
-                        }}
-                    }}"""
-                )
+                api_payload = await self._discover_topic_candidates_via_api(page, candidate_page)
 
                 page_candidates: list[tuple[int, str]] = []
                 if isinstance(api_payload, dict) and api_payload.get('success') and isinstance(api_payload.get('data'), dict):
@@ -529,6 +511,38 @@ class LinuxDoReadPosts:
         print(f'ℹ️ {self.username}: Discovered {len(collected)} topic candidates')
         return collected, discovery_counts
 
+    async def _discover_topic_candidates_via_api(self, page, candidate_page: str) -> dict:
+        """使用浏览器上下文中的 cookies 通过 HTTP 客户端请求列表 JSON。"""
+        api_url = f'{candidate_page}.json'
+        try:
+            cookies = await page.context.cookies()
+            session = curl_requests.Session(timeout=30)
+            try:
+                for cookie in cookies:
+                    name = cookie.get('name')
+                    value = cookie.get('value')
+                    domain = cookie.get('domain') or 'linux.do'
+                    path = cookie.get('path') or '/'
+                    if name and value is not None:
+                        session.cookies.set(name, value, domain=domain, path=path)
+
+                headers = {
+                    'accept': 'application/json, text/plain, */*',
+                    'referer': candidate_page,
+                    'origin': 'https://linux.do',
+                }
+                response = session.get(api_url, headers=headers, timeout=30)
+                text = response.text
+                try:
+                    data = response.json()
+                    return {'success': response.status_code == 200, 'status': response.status_code, 'data': data}
+                except Exception:
+                    return {'success': False, 'status': response.status_code, 'text': text[:500]}
+            finally:
+                session.close()
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     async def _collect_discovery_debug(self, page, source_key: str, candidate_count: int) -> dict:
         """采集 discovery 页调试信息。"""
         try:
@@ -561,7 +575,8 @@ class LinuxDoReadPosts:
         print(
             f"ℹ️ {self.username}: Discovery debug [{source_key}] "
             f"url={page.url}, title={title}, candidates={candidate_count}, "
-            f"topic_links={counts.get('topic_links', 'n/a')}, topic_rows={counts.get('topic_rows', 'n/a')}"
+            f"topic_links={counts.get('topic_links', 'n/a')}, topic_rows={counts.get('topic_rows', 'n/a')}, "
+            f"api_status={debug_info.get('api_status', 'n/a')}, api_success={debug_info.get('api_success', 'n/a')}"
         )
         return debug_info
 
