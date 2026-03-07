@@ -12,6 +12,8 @@ from linuxdo_read_posts import (
     LinuxDoReadPosts,
     ReadRuntimeState,
     classify_read_error,
+    extract_topic_candidates,
+    get_bool_env,
     get_int_env,
     load_linuxdo_accounts,
     should_retry_from_base,
@@ -103,6 +105,30 @@ class TestIntEnv:
                 os.environ['LINUXDO_MAX_POSTS'] = old_value
 
 
+class TestBoolEnv:
+    def test_empty_env_uses_default(self):
+        old_value = os.environ.get('LINUXDO_ENABLE_ID_FALLBACK')
+        try:
+            os.environ['LINUXDO_ENABLE_ID_FALLBACK'] = ''
+            assert get_bool_env('LINUXDO_ENABLE_ID_FALLBACK', False) is False
+        finally:
+            if old_value is None:
+                os.environ.pop('LINUXDO_ENABLE_ID_FALLBACK', None)
+            else:
+                os.environ['LINUXDO_ENABLE_ID_FALLBACK'] = old_value
+
+    def test_true_env(self):
+        old_value = os.environ.get('LINUXDO_ENABLE_ID_FALLBACK')
+        try:
+            os.environ['LINUXDO_ENABLE_ID_FALLBACK'] = 'true'
+            assert get_bool_env('LINUXDO_ENABLE_ID_FALLBACK', False) is True
+        finally:
+            if old_value is None:
+                os.environ.pop('LINUXDO_ENABLE_ID_FALLBACK', None)
+            else:
+                os.environ['LINUXDO_ENABLE_ID_FALLBACK'] = old_value
+
+
 class TestLegacyTopicStateMigration:
     def test_loads_legacy_txt_cache(self):
         root = Path('tests') / '_tmp_linuxdo_state_legacy' / uuid.uuid4().hex
@@ -132,3 +158,30 @@ class TestRetryFromBaseDecision:
     def test_does_not_retry_when_valid_topics_found(self):
         state = ReadRuntimeState(last_topic_id=200000, last_success_topic_id=0)
         assert should_retry_from_base(state, base_topic_id=100000, valid_topics=1) is False
+
+
+class TestExtractTopicCandidates:
+    def test_extracts_discourse_topic_links(self):
+        hrefs = [
+            '/t/some-title/123',
+            'https://linux.do/t/another-title/456?u=test',
+            '/t/topic/789',
+            '/latest',
+            '',
+        ]
+        candidates = extract_topic_candidates(hrefs)
+        assert candidates == [
+            (123, 'https://linux.do/t/some-title/123'),
+            (456, 'https://linux.do/t/another-title/456?u=test'),
+            (789, 'https://linux.do/t/topic/789'),
+        ]
+
+    def test_deduplicates_topic_ids(self):
+        hrefs = ['/t/some-title/123', 'https://linux.do/t/other/123']
+        candidates = extract_topic_candidates(hrefs)
+        assert candidates == [(123, 'https://linux.do/t/some-title/123')]
+
+    def test_ignores_non_topic_links(self):
+        hrefs = ['/latest', '/categories', '/u/test', 'https://linux.do/c/general/1']
+        candidates = extract_topic_candidates(hrefs)
+        assert candidates == []

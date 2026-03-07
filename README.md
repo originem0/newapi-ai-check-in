@@ -387,6 +387,10 @@ DEBUG_ARTIFACTS=true
 
 - 读取 `ACCOUNTS_LINUX_DO`
 - 维护独立的 topic 状态缓存
+- 优先从 Linux.do 列表页发现当前账号可见的 topic 候选
+- 列表页发现会优先使用更精确的 topic 列表选择器，而不是直接抓全页面所有 `/t/` 链接
+- 默认**不启用**旧的 topic ID 扫描 fallback
+- 只有显式设置 `LINUXDO_ENABLE_ID_FALLBACK=true` 时，才会启用旧的 ID 扫描策略
 - 使用更严格的结果模型：
   - `uncertain`
   - `failed`
@@ -399,9 +403,16 @@ DEBUG_ARTIFACTS=true
 - `LINUXDO_MAX_POSTS`
 - `LINUXDO_MAX_TOPIC_ATTEMPTS`
 - `LINUXDO_MAX_RUNTIME_SECONDS`
+- `LINUXDO_ENABLE_ID_FALLBACK`
 - `ALLOW_INTERACTIVE_AUTH`
 
 这些变量即使在 GitHub Actions 中被注入为空字符串，也会自动回退到默认值，不会再因为 `int('')` 之类的问题直接崩溃。
+
+其中：
+
+- `LINUXDO_ENABLE_ID_FALLBACK`
+  - 默认关闭
+  - 仅当列表页候选发现不足、且你明确允许时，才会启用旧版 topic ID 扫描
 
 #### 读帖状态缓存
 

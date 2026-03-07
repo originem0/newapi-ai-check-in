@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -40,6 +41,7 @@ DEFAULT_MAX_POSTS = 100
 DEFAULT_MAX_TOPIC_ATTEMPTS = 60
 DEFAULT_MAX_RUNTIME_SECONDS = 900
 DEFAULT_MAX_TOPIC_DRIFT_FROM_BASE = 50_000
+DEFAULT_DISCOVERY_CANDIDATES = 80
 
 
 TopicStatus = Literal['valid', 'invalid', 'error', 'challenge', 'unknown']
@@ -81,6 +83,13 @@ class ReadAccountResult:
     topic_visits: list[TopicVisitResult] = field(default_factory=list)
     duration_seconds: int = 0
     reset_to_base_retry: bool = False
+    discovered_candidates: int = 0
+    used_id_fallback: bool = False
+    invalid_topics: int = 0
+    unknown_topics: int = 0
+    error_topics: int = 0
+    challenge_topics: int = 0
+    discovery_counts: dict[str, int] = field(default_factory=dict)
 
 
 def classify_read_error(error: Exception | str) -> str:
@@ -112,6 +121,25 @@ def get_int_env(name: str, default: int) -> int:
         return default
 
 
+def get_bool_env(name: str, default: bool = False) -> bool:
+    """读取布尔环境变量；空字符串或非法值时回退默认值。"""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    raw = raw.strip().lower()
+    if not raw:
+        return default
+
+    if raw in {'1', 'true', 'yes', 'on'}:
+        return True
+    if raw in {'0', 'false', 'no', 'off'}:
+        return False
+
+    print(f'⚠️ Invalid boolean for {name}: {raw!r}, using default {default}')
+    return default
+
+
 def should_retry_from_base(state: ReadRuntimeState, base_topic_id: int, valid_topics: int) -> bool:
     """当缓存游标明显漂移且本轮一个有效帖子都没读到时，决定是否回退到 base 重试。"""
     if valid_topics > 0:
@@ -119,6 +147,32 @@ def should_retry_from_base(state: ReadRuntimeState, base_topic_id: int, valid_to
     if state.last_topic_id <= 0:
         return False
     return state.last_topic_id > base_topic_id + DEFAULT_MAX_TOPIC_DRIFT_FROM_BASE
+
+
+def extract_topic_candidates(hrefs: list[str], origin: str = 'https://linux.do') -> list[tuple[int, str]]:
+    """从列表页链接中提取可访问 topic 候选。"""
+    candidates: list[tuple[int, str]] = []
+    seen_ids: set[int] = set()
+
+    for href in hrefs:
+        if not href:
+            continue
+
+        full_url = href if href.startswith('http') else f'{origin}{href}'
+        match = re.search(r'/t/[^/?#]+/(\d+)(?:[/?#]|$)', full_url)
+        if not match:
+            match = re.search(r'/t/topic/(\d+)(?:[/?#]|$)', full_url)
+        if not match:
+            continue
+
+        topic_id = int(match.group(1))
+        if topic_id in seen_ids:
+            continue
+
+        seen_ids.add(topic_id)
+        candidates.append((topic_id, full_url))
+
+    return candidates
 
 
 def load_linuxdo_accounts() -> list[dict]:
@@ -320,8 +374,86 @@ class LinuxDoReadPosts:
 
         return page_reads
 
+    async def _discover_topic_candidates(
+        self, page, max_candidates: int = DEFAULT_DISCOVERY_CANDIDATES
+    ) -> tuple[list[tuple[int, str]], dict[str, int]]:
+        """从 Linux.do 列表页发现当前账号可见的 topic 候选。"""
+        candidate_pages = [
+            'https://linux.do/latest',
+            'https://linux.do/new',
+            'https://linux.do/top',
+        ]
+        collected: list[tuple[int, str]] = []
+        seen_ids: set[int] = set()
+        discovery_counts: dict[str, int] = {}
+
+        for candidate_page in candidate_pages:
+            try:
+                print(f'ℹ️ {self.username}: Discovering topics from {candidate_page}')
+                await page.goto(candidate_page, wait_until='domcontentloaded')
+                try:
+                    await page.wait_for_selector('a[href*="/t/"]', timeout=10000)
+                except Exception:
+                    await page.wait_for_timeout(2000)
+
+                hrefs = await page.evaluate(
+                    """() => {
+                        const preciseSelectors = [
+                            'tbody.topic-list-body tr.topic-list-item a.title',
+                            'tbody.topic-list-body tr.topic-list-item a.raw-topic-link',
+                            'tr.topic-list-item a.title',
+                            '.latest-topic-list-item a.title',
+                            '.topic-list .main-link a.title',
+                        ];
+
+                        const hrefs = [];
+                        const seen = new Set();
+
+                        for (const selector of preciseSelectors) {
+                            for (const anchor of document.querySelectorAll(selector)) {
+                                const href = anchor.getAttribute('href') || '';
+                                if (!href || seen.has(href)) continue;
+                                seen.add(href);
+                                hrefs.push(href);
+                            }
+                        }
+
+                        if (hrefs.length === 0) {
+                            for (const anchor of document.querySelectorAll('a[href*="/t/"]')) {
+                                const href = anchor.getAttribute('href') || '';
+                                if (!href || seen.has(href)) continue;
+                                seen.add(href);
+                                hrefs.push(href);
+                            }
+                        }
+
+                        return hrefs;
+                    }"""
+                )
+                page_candidates = extract_topic_candidates(hrefs)
+                page_key = candidate_page.rsplit('/', 1)[-1]
+                discovery_counts[page_key] = len(page_candidates)
+                for topic_id, topic_url in page_candidates:
+                    if topic_id in seen_ids:
+                        continue
+                    seen_ids.add(topic_id)
+                    collected.append((topic_id, topic_url))
+                    if len(collected) >= max_candidates:
+                        print(f'ℹ️ {self.username}: Discovered {len(collected)} topic candidates')
+                        return collected, discovery_counts
+            except Exception as e:
+                print(f'⚠️ {self.username}: Failed to discover topics from {candidate_page}: {e}')
+                page_key = candidate_page.rsplit('/', 1)[-1]
+                discovery_counts[page_key] = 0
+
+        print(f'ℹ️ {self.username}: Discovered {len(collected)} topic candidates')
+        return collected, discovery_counts
+
     async def _visit_topic(self, page, topic_id: int) -> TopicVisitResult:
         topic_url = f'https://linux.do/t/topic/{topic_id}'
+        return await self._visit_topic_url(page, topic_id, topic_url)
+
+    async def _visit_topic_url(self, page, topic_id: int, topic_url: str) -> TopicVisitResult:
         try:
             print(f'ℹ️ {self.username}: Opening topic {topic_id}...')
             await page.goto(topic_url, wait_until='domcontentloaded')
@@ -352,7 +484,8 @@ class LinuxDoReadPosts:
         max_posts: int,
         max_topic_attempts: int,
         max_runtime_seconds: int,
-    ) -> tuple[ReadRuntimeState, list[TopicVisitResult]]:
+        enable_id_fallback: bool,
+    ) -> tuple[ReadRuntimeState, list[TopicVisitResult], int, bool, dict[str, int]]:
         state = self._load_topic_state()
         state.attempted_count = 0
         state.invalid_streak = 0
@@ -365,12 +498,52 @@ class LinuxDoReadPosts:
         results: list[TopicVisitResult] = []
         read_pages = 0
         started_at = time.time()
+        used_id_fallback = False
+
+        discovered_candidates, discovery_counts = await self._discover_topic_candidates(
+            page, max_candidates=max_topic_attempts
+        )
+        if discovered_candidates:
+            print(f'ℹ️ {self.username}: Reading discovered candidate topics first')
+            for topic_id, topic_url in discovered_candidates:
+                if read_pages >= max_posts or state.attempted_count >= max_topic_attempts:
+                    break
+                if time.time() - started_at >= max_runtime_seconds:
+                    print(f'⚠️ {self.username}: Reached runtime limit during candidate traversal')
+                    break
+
+                state.last_topic_id = topic_id
+                state.attempted_count += 1
+                visit_result = await self._visit_topic_url(page, topic_id, topic_url)
+                results.append(visit_result)
+
+                if visit_result.status == 'valid':
+                    state.invalid_streak = 0
+                    state.last_success_topic_id = topic_id
+                    read_pages += visit_result.pages_read
+                else:
+                    state.invalid_streak += 1
+
+        if not discovered_candidates and not enable_id_fallback:
+            print(f'⚠️ {self.username}: No topic candidates discovered and ID fallback is disabled')
+            self._save_topic_state(state)
+            return state, results, 0, False, discovery_counts
+
+        if discovered_candidates and read_pages > 0:
+            self._save_topic_state(state)
+            return state, results, len(discovered_candidates), used_id_fallback, discovery_counts
+
+        if discovered_candidates and not enable_id_fallback:
+            print(f'⚠️ {self.username}: Discovered candidates produced no valid reads and ID fallback is disabled')
+            self._save_topic_state(state)
+            return state, results, len(discovered_candidates), used_id_fallback, discovery_counts
 
         while read_pages < max_posts and state.attempted_count < max_topic_attempts:
             if time.time() - started_at >= max_runtime_seconds:
                 print(f'⚠️ {self.username}: Reached runtime limit')
                 break
 
+            used_id_fallback = True
             next_topic_id = self._next_topic_id(state, base_topic_id)
             state.last_topic_id = next_topic_id
             state.attempted_count += 1
@@ -386,7 +559,7 @@ class LinuxDoReadPosts:
                 state.invalid_streak += 1
 
         self._save_topic_state(state)
-        return state, results
+        return state, results, len(discovered_candidates), used_id_fallback, discovery_counts
 
     async def run(
         self,
@@ -400,6 +573,7 @@ class LinuxDoReadPosts:
             'LINUXDO_BASE_TOPIC_ID',
             random.randint(DEFAULT_BASE_TOPIC_ID_START, DEFAULT_BASE_TOPIC_ID_END),
         )
+        enable_id_fallback = get_bool_env('LINUXDO_ENABLE_ID_FALLBACK', False)
 
         result = ReadAccountResult(
             username=self.username,
@@ -436,15 +610,21 @@ class LinuxDoReadPosts:
                     await context.storage_state(path=self.storage_state_path)
                     print(f'✅ {self.username}: Storage state saved to cache file')
 
-                state, topic_visits = await self._read_posts(
+                state, topic_visits, discovered_candidates, used_id_fallback, discovery_counts = await self._read_posts(
                     page=page,
                     base_topic_id=base_topic_id,
                     max_posts=max_posts,
                     max_topic_attempts=max_topic_attempts,
                     max_runtime_seconds=max_runtime_seconds,
+                    enable_id_fallback=enable_id_fallback,
                 )
+                result.discovered_candidates = discovered_candidates
+                result.used_id_fallback = used_id_fallback
+                result.discovery_counts = discovery_counts
 
-                if should_retry_from_base(state, base_topic_id, len([visit for visit in topic_visits if visit.status == 'valid'])):
+                if enable_id_fallback and should_retry_from_base(
+                    state, base_topic_id, len([visit for visit in topic_visits if visit.status == 'valid'])
+                ):
                     print(
                         f'⚠️ {self.username}: Cached topic range appears unhealthy '
                         f'(last_topic_id={state.last_topic_id}, base={base_topic_id}), retrying once from base range'
@@ -452,17 +632,25 @@ class LinuxDoReadPosts:
                     result.reset_to_base_retry = True
                     reset_state = ReadRuntimeState(last_topic_id=base_topic_id, last_success_topic_id=0)
                     self._save_topic_state(reset_state)
-                    state, topic_visits = await self._read_posts(
+                    state, topic_visits, discovered_candidates, used_id_fallback, discovery_counts = await self._read_posts(
                         page=page,
                         base_topic_id=base_topic_id,
                         max_posts=max_posts,
                         max_topic_attempts=max_topic_attempts,
                         max_runtime_seconds=max_runtime_seconds,
+                        enable_id_fallback=enable_id_fallback,
                     )
+                    result.discovered_candidates = discovered_candidates
+                    result.used_id_fallback = used_id_fallback
+                    result.discovery_counts = discovery_counts
 
                 result.topic_visits = topic_visits
                 result.topics_attempted = len(topic_visits)
                 result.valid_topics = len([visit for visit in topic_visits if visit.status == 'valid'])
+                result.invalid_topics = len([visit for visit in topic_visits if visit.status == 'invalid'])
+                result.unknown_topics = len([visit for visit in topic_visits if visit.status == 'unknown'])
+                result.error_topics = len([visit for visit in topic_visits if visit.status == 'error'])
+                result.challenge_topics = len([visit for visit in topic_visits if visit.status == 'challenge'])
                 result.pages_read = sum(visit.pages_read for visit in topic_visits)
                 result.last_topic_id = state.last_topic_id
 
@@ -470,10 +658,19 @@ class LinuxDoReadPosts:
                     result.overall_status = 'infra_failed'
                     result.verification_status = 'failed'
                     result.error = 'Provider unreachable during topic traversal'
+                elif result.discovered_candidates == 0 and not result.used_id_fallback:
+                    result.overall_status = 'failed'
+                    result.verification_status = 'failed'
+                    result.error = 'No topic candidates were discovered from list pages'
                 elif result.valid_topics == 0:
                     result.overall_status = 'failed'
                     result.verification_status = 'failed'
-                    result.error = 'No valid topics were read'
+                    result.error = (
+                        'No valid topics were read '
+                        f'(discovered={result.discovered_candidates}, invalid={result.invalid_topics}, '
+                        f'unknown={result.unknown_topics}, error={result.error_topics}, '
+                        f'challenge={result.challenge_topics}, fallback={result.used_id_fallback})'
+                    )
                 else:
                     result.overall_status = 'uncertain'
                     result.verification_status = 'uncertain'
@@ -554,8 +751,12 @@ async def main() -> int:
             notification_lines.append(
                 f"⚠️ {result.username}: page actions completed but business result is {result.verification_status} "
                 f"({duration})\n"
-                f"   topics attempted={result.topics_attempted}, valid={result.valid_topics}, "
-                f"pages_read={result.pages_read}, last_topic_id={result.last_topic_id}"
+                f"   discovered={result.discovered_candidates}, attempted={result.topics_attempted}, "
+                f"valid={result.valid_topics}, invalid={result.invalid_topics}, unknown={result.unknown_topics}, "
+                f"errors={result.error_topics}, challenge={result.challenge_topics}, "
+                f"pages_read={result.pages_read}, last_topic_id={result.last_topic_id}, "
+                f"used_id_fallback={result.used_id_fallback}, reset_retry={result.reset_to_base_retry}, "
+                f"sources={result.discovery_counts}"
             )
         else:
             notification_lines.append(f"❌ {result.username}: {result.error or 'Unknown error'} ({duration})")
