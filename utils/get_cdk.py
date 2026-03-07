@@ -306,6 +306,13 @@ def get_x666_cdk(
                     yield False, {"error": f"Failed to get x666 draw status: {error_msg}"}
                     return
             else:
+                if status_response.status_code == 401:
+                    error_msg = (
+                        'x666 access_token is invalid, expired, or does not match the authenticated account'
+                    )
+                    print(f"❌ {account_name}: {error_msg}")
+                    yield False, {"error": error_msg}
+                    return
                 print(f"❌ {account_name}: Failed to get x666 draw status, HTTP {status_response.status_code}")
                 yield False, {"error": f"Failed to get x666 draw status, HTTP {status_response.status_code}"}
                 return

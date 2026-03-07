@@ -100,3 +100,17 @@ def response_resolve(
     except Exception as e:
         print(f"❌ {account_name}: Error occurred while checking and handling response: {e}")
         return None
+
+
+def classify_transport_error(error: Exception | str) -> str:
+    """对底层连接错误做更可操作的分类。"""
+    message = str(error)
+    lowered = message.lower()
+
+    if 'could not connect to server' in lowered or 'failed to connect' in lowered:
+        return f'Provider unreachable: {message}'
+    if 'timed out' in lowered or 'timeout' in lowered:
+        return f'Network timeout: {message}'
+    if 'could not resolve host' in lowered or 'name or service not known' in lowered:
+        return f'DNS resolution failed: {message}'
+    return message

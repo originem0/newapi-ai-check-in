@@ -24,7 +24,7 @@ async def collect_browser_headers_if_needed(page, account_name: str, challenge_d
     return None
 
 
-async def read_api_user_from_local_storage(page, account_name: str) -> str | int | None:
+async def read_api_user_from_local_storage(page, account_name: str, silent: bool = False) -> str | int | None:
     """从 localStorage.user 中读取 api user id。"""
     try:
         try:
@@ -37,15 +37,19 @@ async def read_api_user_from_local_storage(page, account_name: str) -> str | int
             user_obj = json.loads(user_data)
             api_user = user_obj.get('id')
             if api_user:
-                print(f'✅ {account_name}: Got api user: {api_user}')
+                if not silent:
+                    print(f'✅ {account_name}: Got api user: {api_user}')
                 return api_user
-            print(f'⚠️ {account_name}: User id not found in localStorage')
+            if not silent:
+                print(f'⚠️ {account_name}: User id not found in localStorage')
             return None
 
-        print(f'⚠️ {account_name}: User data not found in localStorage')
+        if not silent:
+            print(f'⚠️ {account_name}: User data not found in localStorage')
         return None
     except Exception as e:
-        print(f'⚠️ {account_name}: Error reading user from localStorage: {e}')
+        if not silent:
+            print(f'⚠️ {account_name}: Error reading user from localStorage: {e}')
         return None
 
 
@@ -57,3 +61,15 @@ def extract_oauth_query_params(page_url: str, account_name: str) -> dict[str, li
         print(f"✅ {account_name}: OAuth code received: {mask_secret(query_params.get('code'))}")
         return query_params
     return None
+
+
+async def should_treat_redirect_timeout_as_success(page, provider_origin: str) -> bool:
+    """判断 redirect timeout 是否其实已经到达可用状态。"""
+    current_url = page.url or ''
+    if current_url.startswith(provider_origin):
+        return True
+    if '/console/' in current_url:
+        return True
+
+    api_user = await read_api_user_from_local_storage(page, 'redirect-timeout-check', silent=True)
+    return api_user is not None

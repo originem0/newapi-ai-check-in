@@ -149,6 +149,7 @@ async def wait_for_cf_clearance_manually(
     account_name: str,
     max_wait_time: int = 60000,
     check_interval: int = 2000,
+    max_loaded_checks_without_cf: int = 5,
 ) -> bool:
     """等待 Cloudflare 验证完成（手动）
     
@@ -165,6 +166,7 @@ async def wait_for_cf_clearance_manually(
         bool: 是否成功获取 cf_clearance cookie
     """
     elapsed_time = 0
+    loaded_without_cf_count = 0
 
     while elapsed_time < max_wait_time:
         # 检查是否已经获取到 cf_clearance cookie
@@ -184,10 +186,18 @@ async def wait_for_cf_clearance_manually(
         page_content = await page.content()
         
         if "Just a moment" in page_title or "Checking your browser" in page_content:
+            loaded_without_cf_count = 0
             print(f"ℹ️ {account_name}: Cloudflare challenge in progress, waiting...")
         else:
             # 页面已经加载完成，但可能还没有 cf_clearance
+            loaded_without_cf_count += 1
             print(f"ℹ️ {account_name}: Page loaded, checking for cf_clearance...")
+            if loaded_without_cf_count >= max_loaded_checks_without_cf and len(cookies) > 0:
+                print(
+                    f"ℹ️ {account_name}: Page has remained stable without cf_clearance for "
+                    f"{loaded_without_cf_count} checks, stopping early"
+                )
+                return False
 
         await page.wait_for_timeout(check_interval)
         elapsed_time += check_interval

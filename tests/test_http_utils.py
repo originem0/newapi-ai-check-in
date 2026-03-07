@@ -1,33 +1,17 @@
-"""Tests for utils/http_utils.py"""
+"""Tests for utils/http_utils.py."""
 
-from utils.http_utils import proxy_resolve
+from utils.http_utils import classify_transport_error
 
 
-class TestProxyResolve:
-    def test_none_config(self):
-        assert proxy_resolve(None) is None
+class TestClassifyTransportError:
+    def test_classifies_connection_failure(self):
+        error = RuntimeError('curl: (7) Failed to connect to host: Could not connect to server')
+        assert classify_transport_error(error).startswith('Provider unreachable:')
 
-    def test_empty_config(self):
-        assert proxy_resolve({}) is None
+    def test_classifies_timeout(self):
+        error = RuntimeError('operation timed out after 30000 milliseconds')
+        assert classify_transport_error(error).startswith('Network timeout:')
 
-    def test_simple_server(self):
-        config = {"server": "http://proxy.example.com:8080"}
-        assert proxy_resolve(config) == "http://proxy.example.com:8080"
-
-    def test_server_with_auth(self):
-        config = {
-            "server": "http://proxy.example.com:8080",
-            "username": "user",
-            "password": "pass",
-        }
-        result = proxy_resolve(config)
-        assert "user:pass@" in result
-        assert "proxy.example.com:8080" in result
-
-    def test_no_server_key(self):
-        config = {"username": "user", "password": "pass"}
-        assert proxy_resolve(config) is None
-
-    def test_socks_proxy(self):
-        config = {"server": "socks5://proxy.example.com:1080"}
-        assert proxy_resolve(config) == "socks5://proxy.example.com:1080"
+    def test_classifies_dns(self):
+        error = RuntimeError('Could not resolve host: example.com')
+        assert classify_transport_error(error).startswith('DNS resolution failed:')

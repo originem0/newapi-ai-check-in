@@ -14,6 +14,7 @@ from utils.oauth_browser import (
     collect_browser_headers_if_needed,
     extract_oauth_query_params,
     read_api_user_from_local_storage,
+    should_treat_redirect_timeout_as_success,
 )
 from utils.runtime_flags import allow_interactive_auth
 from utils.safe_logging import sanitize_url
@@ -289,6 +290,10 @@ class LinuxDoSignIn:
                         # 检查 URL 中是否包含 code 参数，如果包含则视为正常（OAuth 回调成功）
                         if "code=" in page.url:
                             print(f"ℹ️ {self.account_name}: Redirect timeout but OAuth code found in URL, continuing...")
+                        elif await should_treat_redirect_timeout_as_success(page, self.provider_config.origin):
+                            print(
+                                f"ℹ️ {self.account_name}: Redirect timeout but page is already in a usable provider state, continuing..."
+                            )
                         else:
                             print(
                                 f"❌ {self.account_name}: Error occurred during redirecting: {e}\n"

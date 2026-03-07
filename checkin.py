@@ -18,7 +18,7 @@ from utils.browser_utils import aliyun_captcha_check, get_random_user_agent, par
 from utils.config import QUOTA_DIVISOR, AccountConfig, ProviderConfig
 from utils.get_cf_clearance import get_cf_clearance
 from utils.get_headers import get_curl_cffi_impersonate
-from utils.http_utils import proxy_resolve, response_resolve
+from utils.http_utils import classify_transport_error, proxy_resolve, response_resolve
 from utils.run_models import AccountRunResult, AuthAttemptResult, UserState
 from utils.safe_logging import mask_secret, sanitize_url
 from utils.topup import topup
@@ -421,7 +421,7 @@ class CheckIn:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Failed to get client id, {e}",
+                "error": f"Failed to get client id, {classify_transport_error(e)}",
             }
 
     async def get_auth_state_with_browser(self) -> dict:
@@ -586,7 +586,7 @@ class CheckIn:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Failed to get auth state, {e}",
+                "error": f"Failed to get auth state, {classify_transport_error(e)}",
             }
 
     async def get_user_info_with_browser(self, auth_cookies: list[dict]) -> dict:

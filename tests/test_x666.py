@@ -41,6 +41,20 @@ class DummySession:
         return None
 
 
+class DummyUnauthorizedSession:
+    def __init__(self, *args, **kwargs):
+        self.cookies = self
+
+    def set(self, *args, **kwargs):
+        return None
+
+    def get(self, *args, **kwargs):
+        return DummyResponse(401, {"success": False})
+
+    def close(self):
+        return None
+
+
 class DummyAccountConfig:
     def __init__(self, access_token: str | None):
         self.proxy = None
@@ -85,6 +99,14 @@ class TestX666RewardFlow:
         account_config = DummyAccountConfig(access_token="token123")
         results = list(get_x666_cdk(account_config))
         assert results == [(True, {"code": ""})]
+
+    @patch("utils.get_cdk.curl_requests.Session", DummyUnauthorizedSession)
+    def test_x666_401_reports_token_problem(self):
+        account_config = DummyAccountConfig(access_token="bad-token")
+        results = list(get_x666_cdk(account_config))
+        assert results == [
+            (False, {"error": "x666 access_token is invalid, expired, or does not match the authenticated account"})
+        ]
 
     def test_x666_provider_has_no_manual_checkin_endpoint(self):
         config = AppConfig.load_from_env()
