@@ -220,6 +220,19 @@ class TestAppConfig:
     @patch.dict(
         os.environ,
         {
+            "ACCOUNTS": json.dumps([
+                {"provider": "x666", "cookies": "abc=123", "api_user": "user1"},
+            ]),
+        },
+        clear=False,
+    )
+    def test_required_provider_fields_are_validated(self):
+        config = AppConfig.load_from_env()
+        assert len(config.accounts) == 0
+
+    @patch.dict(
+        os.environ,
+        {
             "ACCOUNTS_LINUX_DO": json.dumps([
                 {"username": "user1", "password": "pass1"},
             ]),

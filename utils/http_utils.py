@@ -6,9 +6,11 @@
 import json
 import os
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 from curl_cffi import requests as curl_requests
+
+from utils.safe_logging import should_write_debug_artifacts
 
 
 def proxy_resolve(proxy_config: dict | None = None) -> str | None:
@@ -34,9 +36,11 @@ def proxy_resolve(proxy_config: dict | None = None) -> str | None:
         # 解析 URL 并添加认证信息
         parsed = urlparse(proxy_url)
         # 构建带认证的 URL
-        netloc = f"{username}:{password}@{parsed.hostname}"
+        quoted_username = quote(username, safe='')
+        quoted_password = quote(password, safe='')
+        netloc = f'{quoted_username}:{quoted_password}@{parsed.hostname}'
         if parsed.port:
-            netloc += f":{parsed.port}"
+            netloc += f':{parsed.port}'
         return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
     return proxy_url
@@ -59,13 +63,17 @@ def response_resolve(
     """
     safe_account_name = "".join(c if c.isalnum() else "_" for c in account_name)
 
-    logs_dir = "logs"
-    os.makedirs(logs_dir, exist_ok=True)
-
     try:
         return response.json()
     except json.JSONDecodeError as e:
         print(f"❌ {account_name}: Failed to parse JSON response: {e}")
+
+        if not should_write_debug_artifacts():
+            print(f"⚠️ {account_name}: Debug artifacts disabled, response body not persisted")
+            return None
+
+        logs_dir = 'logs'
+        os.makedirs(logs_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_context = "".join(c if c.isalnum() else "_" for c in context)
@@ -76,16 +84,16 @@ def response_resolve(
             filename = f"{safe_account_name}_{timestamp}_{safe_context}.html"
             filepath = os.path.join(logs_dir, filename)
 
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(response.text)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(response.text[:20000])
 
             print(f"⚠️ {account_name}: Received HTML response, saved to: {filepath}")
         else:
             filename = f"{safe_account_name}_{timestamp}_{safe_context}_invalid.txt"
             filepath = os.path.join(logs_dir, filename)
 
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(response.text)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(response.text[:20000])
 
             print(f"⚠️ {account_name}: Invalid response saved to: {filepath}")
         return None

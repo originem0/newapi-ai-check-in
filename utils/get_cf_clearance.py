@@ -13,6 +13,8 @@ from camoufox.async_api import AsyncCamoufox
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
 
 from utils.get_headers import get_browser_headers, print_browser_headers
+from utils.runtime_flags import allow_interactive_auth
+from utils.safe_logging import mask_secret
 
 
 async def get_cf_clearance(
@@ -94,10 +96,15 @@ async def get_cf_clearance(
                             await page.wait_for_timeout(10000)
                         except Exception as solve_err:
                             print(f"⚠️ {account_name}: Auto-solve failed: {solve_err}, waiting for manual verification...")
+                            if not allow_interactive_auth():
+                                print(f"❌ {account_name}: Interactive Cloudflare verification required in unattended mode")
+                                return None, None
                             # 自动求解失败，回退到手动等待
                             await wait_for_cf_clearance_manually(browser, page, account_name)
                     else:
                         print(f"ℹ️ {account_name}: No Cloudflare challenge detected")
+                        if not allow_interactive_auth():
+                            print(f"ℹ️ {account_name}: Interactive fallback disabled, only waiting for automatic cookie issuance")
                         # 不需要手动操作，但需要等待后台完成 Cloudflare 验证
                         await wait_for_cf_clearance_manually(browser, page, account_name)
                 
@@ -108,7 +115,7 @@ async def get_cf_clearance(
                 for cookie in cookies:
                     cookie_name = cookie.get("name")
                     cookie_value = cookie.get("value")
-                    print(f"  📚 Cookie: {cookie_name} (value: {cookie_value[:50] if cookie_value and len(cookie_value) > 50 else cookie_value}...)")
+                    print(f"  📚 Cookie: {cookie_name} (value: {mask_secret(cookie_value)})")
                     if cookie_name in ["cf_clearance", "__cf_bm", "cf_chl_2", "cf_chl_prog"] and cookie_value is not None:
                         cf_cookies[cookie_name] = cookie_value
                 

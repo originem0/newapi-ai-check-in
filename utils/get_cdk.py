@@ -17,6 +17,7 @@ from curl_cffi import requests as curl_requests
 from utils.get_cf_clearance import get_cf_clearance
 from utils.get_headers import get_curl_cffi_impersonate
 from utils.http_utils import proxy_resolve, response_resolve
+from utils.safe_logging import mask_secret
 
 if TYPE_CHECKING:
     from utils.config import AccountConfig
@@ -120,7 +121,7 @@ def get_runawaytime_cdk(
                         if json_data.get("success"):
                             code = json_data.get("code", "")
                             if code:
-                                print(f"✅ {account_name}: Checkin successful! Code: {code}")
+                                print(f"✅ {account_name}: Checkin successful! Code: {mask_secret(code)}")
                                 yield True, {"code": code}
                         else:
                             message = json_data.get("message", json_data.get("msg", ""))
@@ -192,7 +193,8 @@ def get_runawaytime_cdk(
                             if code:
                                 spin_count += 1
                                 print(
-                                    f"✅ {account_name}: Wheel spin #{spin_count} successful! Code: {code}, remaining: {remaining}"
+                                    f"✅ {account_name}: Wheel spin #{spin_count} successful! "
+                                    f"Code: {mask_secret(code)}, remaining: {remaining}"
                                 )
                                 yield True, {"code": code}
                                 continue
@@ -240,8 +242,8 @@ def get_x666_cdk(
     proxy = account_config.proxy or account_config.get("global_proxy")
 
     if not access_token:
-        print(f"❌ {account_name}: access_token not found in account config")
-        yield False, {"error": "access_token not found in account config"}
+        print(f"❌ {account_name}: x666 access_token not found in account config")
+        yield False, {"error": "x666 access_token not found in account config"}
         return
 
     http_proxy = proxy_resolve(proxy)
@@ -291,7 +293,7 @@ def get_x666_cdk(
 
                     if not can_spin:
                         # 今天已经抽过，显示今日奖励
-                        today_record = status_data.get("today_record")
+                        today_record = status_data.get("today_record") or {}
                         today_quota = today_record.get("quota_amount", 0)
                         today_quota_display = round(today_quota / 500, 2)
                         print(f"✅ {account_name}: Already spun today, today's prize: {today_quota_display}")
@@ -300,12 +302,12 @@ def get_x666_cdk(
                         return
                 else:
                     error_msg = status_data.get("message", "Unknown error") if status_data else "Invalid response"
-                    print(f"❌ {account_name}: Failed to get checkin status: {error_msg}")
-                    yield False, {"error": f"Failed to get checkin status: {error_msg}"}
+                    print(f"❌ {account_name}: Failed to get x666 draw status: {error_msg}")
+                    yield False, {"error": f"Failed to get x666 draw status: {error_msg}"}
                     return
             else:
-                print(f"❌ {account_name}: Failed to get checkin status, HTTP {status_response.status_code}")
-                yield False, {"error": f"Failed to get checkin status, HTTP {status_response.status_code}"}
+                print(f"❌ {account_name}: Failed to get x666 draw status, HTTP {status_response.status_code}")
+                yield False, {"error": f"Failed to get x666 draw status, HTTP {status_response.status_code}"}
                 return
 
             # 执行抽奖
@@ -345,22 +347,28 @@ def get_x666_cdk(
                     return
 
                 message = json_data.get("message", json_data.get("msg", ""))
-                if "already" in message.lower() or "已签到" in message:
+                normalized_message = message.lower()
+                if (
+                    "already" in normalized_message
+                    or "已签到" in message
+                    or "已抽" in message
+                    or "抽过" in message
+                ):
                     print(f"✅ {account_name}: Already spun today, {message}")
                     # 已经抽过，返回成功但 code 为空
                     yield True, {"code": ""}
                     return
 
-                print(f"❌ {account_name}: Spin failed - {message}")
-                yield False, {"error": f"Spin failed - {message}"}
+                print(f"❌ {account_name}: X666 draw failed - {message}")
+                yield False, {"error": f"X666 draw failed - {message}"}
             else:
-                print(f"❌ {account_name}: Spin failed, HTTP {response.status_code}")
-                yield False, {"error": f"Spin failed, HTTP {response.status_code}"}
+                print(f"❌ {account_name}: X666 draw failed, HTTP {response.status_code}")
+                yield False, {"error": f"X666 draw failed, HTTP {response.status_code}"}
         finally:
             session.close()
     except Exception as e:
-        print(f"❌ {account_name}: Error executing x666 spin - {e}")
-        yield False, {"error": f"Error executing x666 spin - {e}"}
+        print(f"❌ {account_name}: Error executing x666 draw - {e}")
+        yield False, {"error": f"Error executing x666 draw - {e}"}
 
 
 async def get_b4u_cdk(
@@ -553,7 +561,9 @@ async def get_b4u_cdk(
                                             draw_count += 1
                                             remaining -= 1
                                             print(
-                                                f"✅ {account_name}: Luckydraw #{draw_count} successful! Prize: {prize_name}, Code: {redemption_code}, remaining: {remaining}"
+                                                f"✅ {account_name}: Luckydraw #{draw_count} successful! "
+                                                f"Prize: {prize_name}, Code: {mask_secret(redemption_code)}, "
+                                                f"remaining: {remaining}"
                                             )
                                             yield True, {"code": redemption_code}
                                         else:

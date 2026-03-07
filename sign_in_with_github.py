@@ -3,16 +3,20 @@
 使用 GitHub 账号执行登录授权
 """
 
-import json
 import os
-from urllib.parse import parse_qs, urlparse
 
 from camoufox.async_api import AsyncCamoufox
 from playwright_captcha import CaptchaType, ClickSolver, FrameworkType
 
 from utils.browser_utils import filter_cookies, save_page_content_to_file, take_screenshot
 from utils.config import ProviderConfig
-from utils.get_headers import get_browser_headers, print_browser_headers
+from utils.oauth_browser import (
+    collect_browser_headers_if_needed,
+    extract_oauth_query_params,
+    read_api_user_from_local_storage,
+)
+from utils.runtime_flags import allow_interactive_auth
+from utils.safe_logging import sanitize_url
 from utils.wait_for_secrets import WaitForSecrets
 
 
@@ -188,12 +192,12 @@ class GitHubSignIn:
                                                 "description": "OTP from authenticator app",
                                             }
                                         }
-                                        secrets = wait_for_secrets.get(
+                                        secrets = await wait_for_secrets.get(
                                             secret_obj,
                                             timeout=5,
                                             notification={
                                                 "title": "GitHub 2FA OTP",
-                                                "message": "请在您的账号关联的邮箱查看验证码，并通过以下链接输入",
+                                                "content": "请在您的账号关联的邮箱查看验证码，并通过以下链接输入",
                                             },
                                         )
                                         if secrets and "OTP" in secrets:
@@ -234,6 +238,11 @@ class GitHubSignIn:
                                             # URL未改变也继续，可能已经在正确页面
                                             pass
                                     else:
+                                        if not allow_interactive_auth():
+                                            print(
+                                                f"❌ {self.account_name}: Interactive OTP required but unattended mode is enabled"
+                                            )
+                                            return False, {"error": "Interactive OTP required in unattended mode"}, None
                                         # 回退到手动输入
                                         print(f"ℹ️ {self.account_name}: Please enter OTP manually in the browser")
                                         await page.wait_for_timeout(30000)  # 等待30秒让用户手动输入
@@ -251,7 +260,7 @@ class GitHubSignIn:
 
                         # 登录后访问授权页面
                         try:
-                            print(f"ℹ️ {self.account_name}: Navigating to authorization page: {oauth_url}")
+                            print(f"ℹ️ {self.account_name}: Navigating to authorization page: {sanitize_url(oauth_url)}")
                             response = await page.goto(oauth_url, wait_until="domcontentloaded")
                             print(
                                 f"ℹ️ {self.account_name}: redirected to app page {response.url if response else 'N/A'}"
@@ -312,26 +321,7 @@ class GitHubSignIn:
                             )
                             await take_screenshot(page, "github_authorization_failed", self.account_name)
 
-                    # 从 localStorage 获取 user 对象并提取 id
-                    api_user = None
-                    try:
-                        try:
-                            await page.wait_for_function('localStorage.getItem("user") !== null', timeout=10000)
-                        except Exception:
-                            await page.wait_for_timeout(5000)
-
-                        user_data = await page.evaluate("() => localStorage.getItem('user')")
-                        if user_data:
-                            user_obj = json.loads(user_data)
-                            api_user = user_obj.get("id")
-                            if api_user:
-                                print(f"✅ {self.account_name}: Got api user: {api_user}")
-                            else:
-                                print(f"⚠️ {self.account_name}: User id not found in localStorage")
-                        else:
-                            print(f"⚠️ {self.account_name}: User data not found in localStorage")
-                    except Exception as e:
-                        print(f"⚠️ {self.account_name}: Error reading user from localStorage: {e}")
+                    api_user = await read_api_user_from_local_storage(page, self.account_name)
 
                     if api_user:
                         print(f"✅ {self.account_name}: OAuth authorization successful")
@@ -343,41 +333,20 @@ class GitHubSignIn:
                         result = {"cookies": user_cookies, "api_user": api_user}
 
                         # 只有当检测到 Cloudflare 验证页面时，才获取并返回浏览器指纹头部信息
-                        browser_headers = None
-                        if cloudflare_challenge_detected:
-                            browser_headers = await get_browser_headers(page)
-                            print_browser_headers(self.account_name, browser_headers)
-                            print(
-                                f"ℹ️ {self.account_name}: Browser headers returned (Cloudflare challenge was detected)"
-                            )
-                        else:
-                            print(
-                                f"ℹ️ {self.account_name}: Browser headers not returned (no Cloudflare challenge detected)"
-                            )
+                        browser_headers = await collect_browser_headers_if_needed(
+                            page, self.account_name, cloudflare_challenge_detected
+                        )
 
                         return True, result, browser_headers
                     else:
                         print(f"⚠️ {self.account_name}: OAuth callback received but no user ID found")
                         await take_screenshot(page, "github_oauth_failed_no_user_id", self.account_name)
 
-                        parsed_url = urlparse(page.url)
-                        query_params = parse_qs(parsed_url.query)
-
-                        # 如果 query 中包含 code，说明 OAuth 回调成功
-                        if "code" in query_params:
-                            print(f"✅ {self.account_name}: OAuth code received: {query_params.get('code')}")
-                            # 只有当检测到 Cloudflare 验证页面时，才获取并返回浏览器指纹头部信息
-                            browser_headers = None
-                            if cloudflare_challenge_detected:
-                                browser_headers = await get_browser_headers(page)
-                                print_browser_headers(self.account_name, browser_headers)
-                                print(
-                                    f"ℹ️ {self.account_name}: Browser headers returned (Cloudflare challenge was detected)"
-                                )
-                            else:
-                                print(
-                                    f"ℹ️ {self.account_name}: Browser headers not returned (no Cloudflare challenge detected)"
-                                )
+                        query_params = extract_oauth_query_params(page.url, self.account_name)
+                        if query_params:
+                            browser_headers = await collect_browser_headers_if_needed(
+                                page, self.account_name, cloudflare_challenge_detected
+                            )
                             return True, query_params, browser_headers
                         else:
                             print(f"❌ {self.account_name}: OAuth failed, no code in callback")

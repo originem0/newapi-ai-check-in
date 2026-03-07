@@ -1,208 +1,262 @@
-# 会自动执行。根据日志里的 workflow 配置，每 8 小时自动签到一次。
+# newapi.ai 多账号自动化奖励脚本
 
-  也就是一天签到 3 次，但实际上每个站一天只能签到一次，多余的会显示"今日已签到"跳过，不会重复领取。
+用于多账号执行 `newapi.ai` / 类 `newapi` 站点的自动化流程。  
+当前仓库已从单纯“签到脚本”演进为**自动化奖励脚本**，支持：
 
-  ---
-  注意一个问题： GitHub Actions 有个限制——如果你的 Fork 仓库 60 天内没有任何活动（commit、issue 等），Actions 会被自动禁用。
+- 常规签到
+- 查询用户信息时自动触发奖励
+- 通过转盘 / 抽奖获得奖励
+- 通过 CDK 自动充值
+- cookies / GitHub / Linux.do 多种认证方式
 
-  日志里提到的 ACTIONS_TRIGGER_PAT 环境变量就是解决这个问题的。如果你想长期稳定运行，可以配一个：
+> 注意：不同 provider 的奖励方式不同，并不都是“签到”。  
+> 例如：`x666 / 薄荷 API` 走的是 **up.x666.me 抽奖自动到账**，不是 `/api/user/checkin`。
 
-  1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
-  2. 创建一个 token，权限给 Actions: Read and Write
-  3. 添加到 Environment secrets，Name 填 ACTIONS_TRIGGER_PAT
-
-  这样脚本会自动保持仓库活跃，防止被禁用。
-
-# newapi.ai 多账号自动签到
-
-用于公益站多账号每日签到。  
-
-Affs:
-- [AnyRouter](https://anyrouter.top/register?aff=wJrb)
-- [AgentRouter](https://agentrouter.org/register?aff=wDU2)
-- [WONG](https://wzw.pp.ua/register?aff=N6Q9)
-- [薄荷 API](https://x666.me/register?aff=dgzt)
-- [Huan API](https://ai.huan666.de/register?aff=qEnU)
-- [KFC API](https://kfc-api.sxxe.net/register?aff=xPnf)
-- [B4U](https://b4u.qzz.io/register?aff=2NeT)
-- [Elysiver](https://elysiver.h-e.top/register?aff=5JsA)
-- [HotaruApi](https://hotaruapi.com/register?aff=q6xq)
-- [Neb](https://ai.zzhdsgsss.xyz/register?aff=tXKw)
-
-其它使用 `newapi.ai` 功能相似, 可自定义环境变量 `PROVIDERS` 支持或 `PR` 到仓库。
+---
 
 ## 功能特性
 
-- ✅ 单个/多账号自动签到
-- ✅ 多种机器人通知（仅推送已配置的通知方式）
-- ✅ linux.do 登录认证
-- ✅ github 登录认证 (with OTP)
-- ✅ Cloudflare bypass
-- ✅ 日志中敏感信息脱敏
+- ✅ 单账号 / 多账号运行
+- ✅ cookies、GitHub、Linux.do 多认证方式
+- ✅ 仅尝试已配置的通知渠道
+- ✅ Cloudflare / WAF 场景支持
+- ✅ 敏感信息日志脱敏（cookie / token / CDK / OAuth code）
+- ✅ 账号级统计与正确退出码
+- ✅ `x666` 等特殊 provider 的显式行为建模
+
+---
+
+## 当前支持的内置 provider
+
+- AnyRouter
+- AgentRouter
+- WONG
+- 薄荷 API (`x666`)
+- Huan API
+- KFC API
+- B4U
+- Elysiver
+- HotaruApi
+- Neb
+- runawaytime
+- 以及仓库内置的其它 provider
+
+你也可以通过 `PROVIDERS` 自定义 provider。
+
+---
+
+## 行为模型说明
+
+### 1) 常规签到
+
+典型路径：
+
+- 查询今日签到状态
+- 若未签到则调用 `/api/user/checkin`
+- 然后查询用户信息
+
+### 2) 自动奖励（查询用户信息即触发）
+
+部分站点没有独立签到接口，查询用户信息时会自动完成奖励流程。
+
+### 3) 抽奖 / 转盘奖励
+
+部分 provider 不是签到，而是抽奖或轮盘：
+
+- `x666`：调用 `up.x666.me` 抽奖，奖励直接累计到账户
+- `b4u` / `runawaytime`：通过抽奖获取 CDK，再自动充值
+
+### 4) CDK 自动充值
+
+若 provider 配置了 `get_cdk + topup_path`，脚本会：
+
+- 获取 CDK
+- 按顺序执行充值
+- 失败则停止后续充值
+
+---
 
 ## 使用方法
 
 ### 1. Fork 本仓库
 
-点击右上角的 "Fork" 按钮，将本仓库 fork 到你的账户。
+点击右上角 **Fork**，将仓库 fork 到你自己的 GitHub 账户。
 
-### 2. 设置 GitHub Environment Secret
+### 2. 启用 GitHub Actions
 
-1. 在你 fork 的仓库中，点击 "Settings" 选项卡
-2. 在左侧菜单中找到 "Environments" -> "New environment"
-3. 新建一个名为 `production` 的环境
-4. 点击新建的 `production` 环境进入环境配置页
-5. 点击 "Add environment secret" 创建 secret：
-   - Name: `ACCOUNTS`
-   - Value: 你的多账号配置数据
+1. 打开你 fork 后仓库的 **Actions**
+2. 启用 workflow
+3. 设置 `production` Environment（推荐）
 
-#### 2.1 全局 OAuth 账号配置（可选）
+### 3. 配置环境变量 / Secrets
 
-可以配置全局的 Linux.do 和 GitHub 账号，供多个 provider 共享使用。
+建议在：
 
-##### 2.1.1 ACCOUNTS_LINUX_DO
+- `Settings -> Environments -> production -> Environment secrets`
 
-在仓库的 Settings -> Environments -> production -> Environment secrets 中添加：
-   - Name: `ACCOUNTS_LINUX_DO`
-   - Value: Linux.do 账号列表
+中配置以下变量。
 
-```json
-[
-  {"username": "用户名1", "password": "密码1"},
-  {"username": "用户名2", "password": "密码2"}
-]
-```
+---
 
-##### 2.1.2 ACCOUNTS_GITHUB
+## 账号配置
 
-在仓库的 Settings -> Environments -> production -> Environment secrets 中添加：
-   - Name: `ACCOUNTS_GITHUB`
-   - Value: GitHub 账号列表
+### `ACCOUNTS`
+
+主账号配置，必须是 JSON 数组。
+
+示例：
 
 ```json
 [
-  {"username": "用户名1", "password": "密码1"},
-  {"username": "用户名2", "password": "密码2"}
+  {
+    "name": "主账号",
+    "provider": "anyrouter",
+    "cookies": {
+      "session": "你的 session"
+    },
+    "api_user": "你的 api_user"
+  },
+  {
+    "name": "使用全局 OAuth",
+    "provider": "agentrouter",
+    "github": true,
+    "linux.do": true
+  },
+  {
+    "name": "薄荷",
+    "provider": "x666",
+    "cookies": {
+      "session": "你的 session"
+    },
+    "api_user": "你的 api_user",
+    "access_token": "来自 qd.x666.me 的 token"
+  }
 ]
 ```
 
-### 3 多账号配置格式
-> 如果未提供 `name` 字段，会使用 `{provider.name} 1`、`{provider.name} 2` 等默认名称。  
-> 配置中 `cookies`、`github`、`linux.do` 必须至少配置 1 个。  
-> 使用 `cookies` 设置时，`api_user` 字段必填。  
+### 字段说明
 
-#### 3.1 OAuth 配置支持三种格式
+- `name`：可选，日志和通知中的显示名称
+- `provider`：可选，默认 `anyrouter`
+- `cookies`：可选，用于 cookies 登录
+- `api_user`：使用 cookies 时必填
+- `proxy`：可选，单账号代理
+- `github`：可选，支持 `true / object / array`
+- `linux.do`：可选，支持 `true / object / array`
+- `access_token`：`x666` 必填
+- `get_cdk_cookies`：部分需要外部站点抽奖的 provider 必填
 
-`github` 和 `linux.do` 字段支持以下三种配置格式：
+### OAuth 配置格式
 
-**1. bool 类型 - 使用全局账号**
+`github` 和 `linux.do` 支持三种格式：
+
+#### 1. `true`：使用全局账号
+
 ```json
-{"provider": "anyrouter", "linux.do": true}
+{"provider": "agentrouter", "github": true}
 ```
-当设置为 `true` 时，使用 `LINUX_DO_ACCOUNTS` 或 `GITHUB_ACCOUNTS` 中配置的所有账号。
 
-**2. dict 类型 - 单个账号**
+#### 2. 单个账号对象
+
 ```json
-{"provider": "anyrouter", "linux.do": {"username": "用户名", "password": "密码"}}
+{"provider": "agentrouter", "github": {"username": "user", "password": "pass"}}
 ```
 
-**3. array 类型 - 多个账号**
+#### 3. 多账号数组
+
 ```json
-{"provider": "anyrouter", "linux.do": [
-  {"username": "用户名1", "password": "密码1"},
-  {"username": "用户名2", "password": "密码2"}
+{"provider": "agentrouter", "github": [
+  {"username": "user1", "password": "pass1"},
+  {"username": "user2", "password": "pass2"}
 ]}
 ```
 
-#### 3.2 完整示例
+---
+
+## 全局 OAuth 账号
+
+### `ACCOUNTS_GITHUB`
 
 ```json
 [
-    {
-      "name": "我的账号",
-      "cookies": {
-        "session": "account1_session_value"
-      },
-      "api_user": "account1_api_user_id",
-      "github": {
-        "username": "myuser",
-        "password": "mypass"
-      },
-      "linux.do": {
-        "username": "myuser",
-        "password": "mypass"
-      },
-      // --- 额外的配置说明 ---
-      // 当前账号使用代理 
-      "proxy": {
-        "server": "http://username:password@proxy.example.com:8080"
-      },
-      //provider: x666 必须配置
-      "access_token": "来自 https://qd.x666.me/",
-      "get_cdk_cookies": {
-        // provider: runawaytime 必须配置
-        "session": "来自 https://fuli.hxi.me/",
-        // provider: b4u 必须配置
-        "__Secure-authjs.session-token": "来自 https://tw.b4u.qzz.io/"
-      }
-    },
-    {
-      "name": "使用全局账号",
-      "provider": "agentrouter",
-      "linux.do": true,
-      "github": true
-    },
-    {
-      "name": "多个 OAuth 账号",
-      "provider": "wong",
-      "linux.do": [
-        {"username": "user1", "password": "pass1"},
-        {"username": "user2", "password": "pass2"}
-      ]
-    }
-  ]
+  {"username": "用户名1", "password": "密码1"},
+  {"username": "用户名2", "password": "密码2"}
+]
 ```
 
-#### 3.3 字段说明：
+### `ACCOUNTS_LINUX_DO`
 
-- `name` (可选)：自定义账号显示名称，用于通知和日志中标识账号
-- `provider` (可选)：供应商，内置 `anyrouter`、`agentrouter`、`wong`、`huan666`、`x666`、`runawaytime`、`kfc`、`neb`、`elysiver`、`hotaru`、`b4u`、`lightllm`、`takeapi`、`thatapi`、`duckcoding`、`free-duckcoding`、`taizi`、`openai-test`、`icat`、`chengtx`，默认使用 `anyrouter`
-- `proxy` (可选)：单个账号代理配置，支持 `http`、`socks5` 代理
-- `cookies`(可选)：用于身份验证的 cookies 数据
-- `api_user`(cookies 设置时必需)：用于请求头的 new-api-user 参数
-- `linux.do`(可选)：用于登录身份验证，支持三种格式：
-  - `true`：使用 `LINUX_DO_ACCOUNTS` 中的全局账号
-  - `{"username": "xxx", "password": "xxx"}`：单个账号
-  - `[{"username": "xxx", "password": "xxx"}, ...]`：多个账号
-- `github`(可选)：用于登录身份验证，支持三种格式：
-  - `true`：使用 `GITHUB_ACCOUNTS` 中的全局账号
-  - `{"username": "xxx", "password": "xxx"}`：单个账号
-  - `[{"username": "xxx", "password": "xxx"}, ...]`：多个账号
+```json
+[
+  {"username": "用户名1", "password": "密码1"},
+  {"username": "用户名2", "password": "密码2"}
+]
+```
 
-#### 3.4 供应商配置：
+---
 
-在仓库的 Settings -> Environments -> production -> Environment secrets 中添加：
-   - Name: `PROVIDERS`
-   - Value: 供应商
-   - 说明: 自定义的 provider 会自动添加到账号中执行（在账号配置中没有使用自定义 provider 情况下, 详见 [PROVIDERS.json](./PROVIDERS.json)）。
+## 特殊 provider 说明
 
+### `x666 / 薄荷 API`
 
-#### 3.5 代理配置
-> 应用到所有的账号，如果单个账号需要使用代理，请在单个账号配置中添加 `proxy` 字段。  
-> 打开 [webshare](https://dashboard.webshare.io/) 注册账号，获取免费代理
+这是当前最容易误解的 provider。
 
-在仓库的 Settings -> Environments -> production -> Environment secrets 中添加：
-   - Name: `PROXY`
-   - Value: 代理服务器地址
+#### 它不是“普通签到”
 
+当前实现中：
 
-```bash
+- 不调用常规 `/api/user/checkin`
+- 会访问 `up.x666.me`
+- 执行每日抽奖
+- 奖励**自动累积到账户**
+
+#### 必填字段
+
+```json
 {
-  "server": "http://username:password@proxy.example.com:8080"
+  "provider": "x666",
+  "cookies": {"session": "..."},
+  "api_user": "...",
+  "access_token": "..."
 }
+```
 
-或者
+如果缺少 `access_token`，账号会在加载阶段被跳过。
 
+#### `access_token` 能否自动获取？
+
+**当前版本不能自动获取。**
+
+仓库现在只会消费你提供的 `access_token`，不会自动登录 `qd.x666.me` 去抓取 token。
+
+---
+
+## 自定义 provider
+
+### `PROVIDERS`
+
+用于补充自定义 provider，必须是 JSON 对象。
+
+说明：
+
+- 自定义 provider 适用于规则较简单的站点
+- 复杂的 `get_cdk` / 特殊 OAuth / 特殊奖励逻辑仍需要代码支持
+
+---
+
+## 代理配置
+
+### 全局代理：`PROXY`
+
+```json
+{
+  "server": "http://proxy.example.com:8080"
+}
+```
+
+或者：
+
+```json
 {
   "server": "http://proxy.example.com:8080",
   "username": "username",
@@ -210,131 +264,201 @@ Affs:
 }
 ```
 
+### 单账号代理
 
-#### 3.6 如何获取 cookies 与 api_user 的值。
+直接在 `ACCOUNTS` 某个账号内写：
 
-通过 F12 工具，切到 Application 面板，Cookies -> session 的值，最好重新登录下，但有可能提前失效，失效后报 401 错误，到时请再重新获取。
+```json
+{
+  "provider": "anyrouter",
+  "proxy": {
+    "server": "http://proxy.example.com:8080"
+  }
+}
+```
+
+---
+
+## 无人值守 / 交互式行为
+
+### `ALLOW_INTERACTIVE_AUTH`
+
+默认情况下，脚本按**无人值守优先**策略运行。
+
+这意味着：
+
+- 如果某个流程需要人工 OTP
+- 或 Cloudflare 验证必须人工介入
+
+脚本会**明确失败**，而不是无限等待或伪装成自动化成功。
+
+若你希望允许手动介入，可设置：
+
+```bash
+ALLOW_INTERACTIVE_AUTH=true
+```
+
+适合：
+
+- 手动触发 workflow
+- 本地调试
+
+不建议用于真正的定时无人值守任务。
+
+---
+
+## 调试产物
+
+### `DEBUG_ARTIFACTS`
+
+默认情况下，脚本**不会**把异常 HTML / 原始响应体落盘。
+
+如果需要排查特殊问题，可开启：
+
+```bash
+DEBUG_ARTIFACTS=true
+```
+
+开启后：
+
+- 解析失败的响应可能会写入 `logs/`
+- 仅用于临时调试
+
+建议调试完成后关闭。
+
+---
+
+## 如何获取 `cookies` 与 `api_user`
+
+### 获取 `session` cookie
+
+浏览器 F12 -> Application -> Cookies -> `session`
+
+> session 可能会失效，失效后通常会出现 401 / 认证失败。
 
 ![获取 cookies](./assets/request-cookie-session.png)
 
-通过 F12 工具，切到 Application 面板，面板，Local storage -> user 对象中的 id 字段。
+### 获取 `api_user`
+
+浏览器 F12 -> Application -> Local Storage -> `user` 对象中的 `id`
 
 ![获取 api_user](./assets/request-api-user.png)
 
-#### 3.7 `GitHub` 在新设备上登录会有两次验证
+---
 
-通过打印日志中链接打开并输入验证码。
+## GitHub / Linux.do 自动化说明
 
-![输入 OTP](./assets/github-otp.png)
+### GitHub
 
-### 4. 启用 GitHub Actions
+- 支持缓存的登录态恢复
+- 支持通过 StepSecurity wait-for-secrets 注入 OTP
+- 若无人值守模式下必须人工输入 OTP，会显式失败
 
-1. 在你的仓库中，点击 "Actions" 选项卡
-2. 如果提示启用 Actions，请点击启用
-3. 找到 "newapi.ai 自动签到" workflow
-4. 点击 "Enable workflow"
+### Linux.do
 
-### 5. 测试运行
+- 支持缓存登录态恢复
+- 支持 Cloudflare 挑战自动求解
+- 若自动求解失败且不允许交互式认证，会显式失败
 
-你可以手动触发一次签到来测试：
+---
 
-1. 在 "Actions" 选项卡中，点击 "newapi.ai 自动签到"
-2. 点击 "Run workflow" 按钮
-3. 确认运行
+## 通知
 
-![运行结果](./assets/check-in.png)
+脚本只会尝试**已配置的通知方式**。
 
-## 执行时间
+支持：
 
-- 脚本每 8 小时执行一次（1. action 无法准确触发，基本延时 1~1.5h；2. 目前观测到 anyrouter.top 的签到是每 24h 而不是零点就可签到）
-- 你也可以随时手动触发签到
+- Email
+- DingTalk
+- Feishu
+- WeChat Work
+- PushPlus
+- Server 酱
+- Telegram
 
-## 注意事项
+相关变量：
 
-- 可以在 Actions 页面查看详细的运行日志
-- 支持部分账号失败，只要有账号成功签到，整个任务就不会失败
-- `GitHub` 新设备 OTP 验证，注意日志中的链接或配置了通知注意接收的链接，访问链接进行输入验证码
+- `EMAIL_USER`
+- `EMAIL_PASS`
+- `EMAIL_TO`
+- `CUSTOM_SMTP_SERVER`
+- `DINGDING_WEBHOOK`
+- `FEISHU_WEBHOOK`
+- `WEIXIN_WEBHOOK`
+- `PUSHPLUS_TOKEN`
+- `SERVERPUSHKEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
-## 开启通知
+当前通知标题已从旧的 `Check-in Alert` 改为更准确的：
 
-脚本支持多种通知方式，可以通过配置以下环境变量开启，如果 `webhook` 有要求安全设置，例如钉钉，可以在新建机器人时选择自定义关键词，填写 `newapi.ai`。
+- `Automation Run Alert`
 
-### 邮箱通知
+---
 
-- `EMAIL_USER`: 发件人邮箱地址
-- `EMAIL_PASS`: 发件人邮箱密码/授权码
-- `CUSTOM_SMTP_SERVER`: 自定义发件人 SMTP 服务器(可选)
-- `EMAIL_TO`: 收件人邮箱地址
+## Action 保活（可选）
 
-### 钉钉机器人
+GitHub 对长期无活动的 fork 仓库可能会自动禁用 Actions。  
+如果你想尽量保持自动运行，可配置：
 
-- `DINGDING_WEBHOOK`: 钉钉机器人的 Webhook 地址
+- `ACTIONS_TRIGGER_PAT`
 
-### 飞书机器人
+---
 
-- `FEISHU_WEBHOOK`: 飞书机器人的 Webhook 地址
+## 执行结果与退出码
 
-### 企业微信机器人
+当前版本已修复旧版统计问题：
 
-- `WEIXIN_WEBHOOK`: 企业微信机器人的 Webhook 地址
+- 以**账号级**成功/失败为准
+- 不再把“认证方式数量”误当作“账号数量”
+- 退出码含义：
+  - `0`：至少一个账号成功
+  - `1`：全部账号失败，或系统初始化失败
 
-### PushPlus 推送
+---
 
-- `PUSHPLUS_TOKEN`: PushPlus 的 Token
-
-### Server 酱
-
-- `SERVERPUSHKEY`: Server 酱的 SendKey
-
-### Telegram 机器人
-
-- `TELEGRAM_BOT_TOKEN`: Telegram 机器人的 Token
-- `TELEGRAM_CHAT_ID`: 接收消息的 Chat ID
-
-## 防止Action因长时间无活动而自动禁止
-- `ACTIONS_TRIGGER_PAT`: 在Github Settings -> Developer Settings -> Personal access tokens -> Tokens(classic) 中新建一个包含repo和workflow的令牌
-
-配置步骤：
-
-1. 在仓库的 Settings -> Environments -> production -> Environment secrets 中添加上述环境变量
-2. 每个通知方式都是独立的，只需配置你需要的推送方式
-3. 脚本只会尝试已配置的通知方式，未配置的会自动跳过（不会产生错误日志）
-
-## 故障排除
-
-如果签到失败，请检查：
-
-1. 账号配置格式是否正确
-2. 网站是否更改了签到接口
-3. 查看 Actions 运行日志获取详细错误信息
-
-## 本地开发环境设置
-
-如果你需要在本地测试或开发，请按照以下步骤设置：
+## 本地开发
 
 ```bash
-# 安装所有依赖
 uv sync --dev
-
-# 安装 Camoufox 浏览器
-python3 -m camoufox fetch
-
-# 按 .env.example 创建 .env
+python -m camoufox fetch
+uv run pytest
 uv run main.py
 ```
 
-## 测试
+---
 
-```bash
-uv sync --dev
+## 故障排查
 
-# 安装 Camoufox 浏览器
-python3 -m camoufox fetch
+如果运行失败，请优先检查：
 
-# 运行测试
-uv run pytest tests/
-```
+1. `ACCOUNTS` 是否为合法 JSON 数组
+2. cookies + `api_user` 是否对应同一账号
+3. `x666` 是否配置了有效 `access_token`
+4. 是否触发了需要人工介入的 OTP / Cloudflare 验证
+5. provider 接口是否已变更
+6. 是否开启了代理且代理可用
+
+---
+
+## 安全说明
+
+当前版本已对以下信息做脱敏处理：
+
+- cookies
+- token
+- OAuth code
+- CDK
+- StepSecurity secrets
+
+但你仍应当把仓库当作**敏感自动化仓库**处理：
+
+- 不要把真实密钥提交到 git
+- 优先使用 GitHub Environment secrets
+- 调试时谨慎开启 `DEBUG_ARTIFACTS`
+
+---
 
 ## 免责声明
 
-本脚本仅用于学习和研究目的，使用前请确保遵守相关网站的使用条款.
+本项目仅用于学习、研究与自动化实践，请在使用前确认遵守目标网站的使用条款与相关规则。

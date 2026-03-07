@@ -56,6 +56,8 @@ class ProviderConfig:
     aliyun_captcha: bool = False
     bypass_method: Literal["waf_cookies", "cf_clearance"] | None = None
     isCustomize: bool = False  # 是否为自定义 provider（从环境变量加载）
+    reward_mode: Literal["manual_checkin", "auto_on_userinfo", "draw_reward", "cdk_then_topup"] = "manual_checkin"
+    required_account_fields: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_dict(cls, name: str, data: dict, is_customize: bool = False) -> "ProviderConfig":
@@ -91,6 +93,8 @@ class ProviderConfig:
             aliyun_captcha=data.get("aliyun_captcha", False),
             bypass_method=data.get("bypass_method"),
             isCustomize=is_customize,
+            reward_mode=data.get("reward_mode", "manual_checkin"),
+            required_account_fields=tuple(data.get("required_account_fields", [])),
         )
 
     def needs_waf_cookies(self) -> bool:
@@ -103,7 +107,7 @@ class ProviderConfig:
 
     def needs_manual_check_in(self) -> bool:
         """判断是否需要手动调用签到接口"""
-        return self.check_in_path is not None
+        return self.reward_mode == "manual_checkin" and self.check_in_path is not None
 
     def needs_manual_topup(self) -> bool:
         """判断是否需要手动执行充值（通过 CDK）
@@ -311,7 +315,7 @@ class AppConfig:
         github_accounts = cls._load_oauth_accounts(github_accounts_env, "GitHub")
 
         # 加载账号配置（传入全局 OAuth 账号用于解析 bool 类型配置）
-        accounts = cls._load_accounts(accounts_env, linux_do_accounts, github_accounts)
+        accounts = cls._load_accounts(accounts_env, providers, linux_do_accounts, github_accounts)
 
         # 自动为自定义 provider 添加账号（如果 accounts 中没有对应的 provider）
         accounts = cls._auto_add_accounts_for_custom_providers(
@@ -525,6 +529,7 @@ class AppConfig:
                 linuxdo_auth_path="/api/oauth/linuxdo",
                 aliyun_captcha=False,
                 bypass_method="cf_clearance",
+                reward_mode="cdk_then_topup",
             ),
             "x666": ProviderConfig(
                 name="x666",
@@ -544,6 +549,8 @@ class AppConfig:
                 linuxdo_auth_path="/api/oauth/linuxdo",
                 aliyun_captcha=False,
                 bypass_method=None,
+                reward_mode="draw_reward",
+                required_account_fields=("access_token",),
             ),
             "kfc": ProviderConfig(
                 name="kfc",
@@ -641,6 +648,7 @@ class AppConfig:
                 linuxdo_auth_path="/api/oauth/linuxdo",
                 aliyun_captcha=False,
                 bypass_method="cf_clearance",
+                reward_mode="cdk_then_topup",
             ),
             "lightllm": ProviderConfig(
                 name="lightllm",
@@ -971,6 +979,7 @@ class AppConfig:
     def _load_accounts(
         cls,
         accounts_env: str,
+        providers: Dict[str, ProviderConfig],
         global_linux_do_accounts: List["OAuthAccountConfig"],
         global_github_accounts: List["OAuthAccountConfig"],
     ) -> List["AccountConfig"]:
@@ -1068,6 +1077,19 @@ class AppConfig:
                         f"⚠️ {account_name} must have at least one valid authentication method (linux.do, github, or cookies), skipping"
                     )
                     continue
+
+                provider_name = account.get("provider", "anyrouter")
+                provider_config = providers.get(provider_name)
+                if provider_config:
+                    missing_fields = [
+                        field_name for field_name in provider_config.required_account_fields if not account.get(field_name)
+                    ]
+                    if missing_fields:
+                        print(
+                            f"⚠️ {account_name} provider {provider_name} missing required field(s): "
+                            f"{', '.join(missing_fields)}, skipping"
+                        )
+                        continue
 
                 # 创建 AccountConfig，传入解析后的 OAuth 账号列表
                 account_config = AccountConfig.from_dict(account, linux_do_accounts, github_accounts)

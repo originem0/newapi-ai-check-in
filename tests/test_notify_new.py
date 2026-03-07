@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils.notify import NotificationKit
+from utils.notify import NotificationKit, get_notifier, notify
 
 
 @pytest.fixture
@@ -39,6 +39,15 @@ class TestNotificationKitInit:
 
     def test_with_pushplus(self, kit_with_pushplus):
         assert kit_with_pushplus.pushplus_token == "test_token"
+
+    def test_get_notifier_reads_current_environment(self):
+        with patch.dict(os.environ, {"PUSHPLUS_TOKEN": "live_token"}, clear=True):
+            kit = get_notifier()
+        assert kit.pushplus_token == "live_token"
+
+    def test_lazy_notify_proxy_reads_environment_at_call_time(self):
+        with patch.dict(os.environ, {"PUSHPLUS_TOKEN": "proxy_token"}, clear=True):
+            assert notify.pushplus_token == "proxy_token"
 
 
 class TestPushMessage:

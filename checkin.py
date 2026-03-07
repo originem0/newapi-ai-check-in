@@ -19,6 +19,8 @@ from utils.config import QUOTA_DIVISOR, AccountConfig, ProviderConfig
 from utils.get_cf_clearance import get_cf_clearance
 from utils.get_headers import get_curl_cffi_impersonate
 from utils.http_utils import proxy_resolve, response_resolve
+from utils.run_models import AccountRunResult, AuthAttemptResult, UserState
+from utils.safe_logging import mask_secret, sanitize_url
 from utils.topup import topup
 
 
@@ -99,7 +101,7 @@ class CheckIn:
                     for cookie in cookies:
                         cookie_name = cookie.get("name")
                         cookie_value = cookie.get("value")
-                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value[:8]}{'***' if len(str(cookie_value)) > 8 else ''})")
+                        print(f"  📚 Cookie: {cookie_name} (value: {mask_secret(cookie_value)})")
                         if cookie_name in ["acw_tc", "cdn_sec_tc", "acw_sc__v2"] and cookie_value is not None:
                             waf_cookies[cookie_name] = cookie_value
 
@@ -262,7 +264,7 @@ class CheckIn:
                     for cookie in cookies:
                         cookie_name = cookie.get("name")
                         cookie_value = cookie.get("value")
-                        print(f"  📚 Cookie: {cookie_name} (value: {cookie_value[:8]}{'***' if len(str(cookie_value)) > 8 else ''})")
+                        print(f"  📚 Cookie: {cookie_name} (value: {mask_secret(cookie_value)})")
                         # if cookie_name in ["acw_tc", "cdn_sec_tc", "acw_sc__v2"]
                         # and cookie_value is not None:
                         aliyun_captcha_cookies[cookie_name] = cookie_value
@@ -885,7 +887,7 @@ class CheckIn:
                 await asyncio.sleep(topup_interval)
 
             topup_count += 1
-            print(f"💰 {self.account_name}: Executing topup #{topup_count} with CDK: {cdk}")
+            print(f"💰 {self.account_name}: Executing topup #{topup_count} with CDK: {mask_secret(cdk)}")
 
             topup_result = topup(
                 provider_config=self.provider_config,
@@ -955,7 +957,7 @@ class CheckIn:
             # 打印 cookies 的键和值
             print(f"ℹ️ {self.account_name}: Cookies to be used:")
             for key, value in cookies.items():
-                print(f"  📚 {key}: {value[:8]}***")
+                print(f"  📚 {key}: {mask_secret(value)}")
             session.cookies.update(cookies)
 
             # 使用传入的公用请求头，并添加动态头部
@@ -995,7 +997,10 @@ class CheckIn:
                     if not check_in_result.get("success"):
                         return False, {"error": check_in_result.get("error", "Check-in failed")}
             else:
-                print(f"ℹ️ {self.account_name}: Check-in completed automatically (triggered by user info request)")
+                if self.provider_config.name == "x666":
+                    print(f"ℹ️ {self.account_name}: X666 has no separate check-in endpoint, continuing with draw flow")
+                else:
+                    print(f"ℹ️ {self.account_name}: Check-in completed automatically (triggered by user info request)")
 
             # 如果需要手动 topup（配置了 topup_path 和 get_cdk），执行 topup
             if self.provider_config.needs_manual_topup():
@@ -1135,50 +1140,17 @@ class CheckIn:
                 # 构建带参数的回调 URL
                 base_url = self.provider_config.get_github_auth_url()
                 callback_url = f"{base_url}?{urlencode(result_data, doseq=True)}"
-                print(f"ℹ️ {self.account_name}: Callback URL: {callback_url}")
                 try:
-                    # 将 Camoufox 格式的 cookies 转换为 curl_cffi 格式
-                    auth_cookies_list = auth_state_result.get("cookies", [])
-                    for cookie_dict in auth_cookies_list:
-                        session.cookies.set(cookie_dict["name"], cookie_dict["value"])
-
-                    # 如果 OAuth 登录返回了 browser_headers，用它更新 common_headers
-                    updated_headers = common_headers.copy()
-                    if oauth_browser_headers:
-                        print(f"ℹ️ {self.account_name}: Updating headers with OAuth browser fingerprint")
-                        updated_headers.update(oauth_browser_headers)
-
-                    response = session.get(callback_url, headers=updated_headers, timeout=30)
-
-                    if response.status_code == 200:
-                        json_data = response_resolve(response, "github_oauth_callback", self.account_name)
-                        if json_data and json_data.get("success"):
-                            user_data = json_data.get("data", {})
-                            api_user = user_data.get("id")
-
-                            if api_user:
-                                print(f"✅ {self.account_name}: Got api_user from callback: {api_user}")
-
-                                # 提取 cookies
-                                user_cookies = {}
-                                for cookie in response.cookies.jar:
-                                    user_cookies[cookie.name] = cookie.value
-
-                                print(
-                                    f"ℹ️ {self.account_name}: Extracted {len(user_cookies)} user cookies: {list(user_cookies.keys())}"
-                                )
-                                merged_cookies = {**bypass_cookies, **user_cookies}
-                                return await self.check_in_with_cookies(merged_cookies, updated_headers, api_user, impersonate)
-                            else:
-                                print(f"❌ {self.account_name}: No user ID in callback response")
-                                return False, {"error": "No user ID in OAuth callback response"}
-                        else:
-                            error_msg = json_data.get("message", "Unknown error") if json_data else "Invalid response"
-                            print(f"❌ {self.account_name}: OAuth callback failed: {error_msg}")
-                            return False, {"error": f"OAuth callback failed: {error_msg}"}
-                    else:
-                        print(f"❌ {self.account_name}: OAuth callback HTTP {response.status_code}")
-                        return False, {"error": f"OAuth callback HTTP {response.status_code}"}
+                    return await self._handle_oauth_callback_via_http(
+                        session=session,
+                        callback_url=callback_url,
+                        callback_context="github_oauth_callback",
+                        auth_state_cookies=auth_state_result.get("cookies", []),
+                        common_headers=common_headers,
+                        oauth_browser_headers=oauth_browser_headers,
+                        bypass_cookies=bypass_cookies,
+                        impersonate=impersonate,
+                    )
                 except Exception as callback_err:
                     print(f"❌ {self.account_name}: Error calling OAuth callback: {callback_err}")
                     return False, {"error": f"OAuth callback error: {callback_err}"}
@@ -1191,6 +1163,62 @@ class CheckIn:
             return False, {"error": "GitHub check-in process error"}
         finally:
             session.close()
+
+    @staticmethod
+    def _set_auth_state_cookies(session: curl_requests.Session, auth_cookies_list: list[dict]) -> None:
+        """将浏览器态 cookies 注入到 curl_cffi session。"""
+        for cookie_dict in auth_cookies_list:
+            session.cookies.set(cookie_dict['name'], cookie_dict['value'])
+
+    @staticmethod
+    def _merge_oauth_headers(common_headers: dict, oauth_browser_headers: dict | None) -> dict:
+        """合并 OAuth 返回的浏览器指纹头部。"""
+        updated_headers = common_headers.copy()
+        if oauth_browser_headers:
+            updated_headers.update(oauth_browser_headers)
+        return updated_headers
+
+    async def _handle_oauth_callback_via_http(
+        self,
+        session: curl_requests.Session,
+        callback_url: str,
+        callback_context: str,
+        auth_state_cookies: list[dict],
+        common_headers: dict,
+        oauth_browser_headers: dict | None,
+        bypass_cookies: dict,
+        impersonate: str,
+    ) -> tuple[bool, dict]:
+        """通过 provider OAuth 回调接口换取 cookies + api_user。"""
+        print(f"ℹ️ {self.account_name}: Callback URL: {sanitize_url(callback_url)}")
+
+        self._set_auth_state_cookies(session, auth_state_cookies)
+        updated_headers = self._merge_oauth_headers(common_headers, oauth_browser_headers)
+        if oauth_browser_headers:
+            print(f"ℹ️ {self.account_name}: Updating headers with OAuth browser fingerprint")
+
+        response = session.get(callback_url, headers=updated_headers, timeout=30)
+        if response.status_code != 200:
+            print(f"❌ {self.account_name}: OAuth callback HTTP {response.status_code}")
+            return False, {"error": f"OAuth callback HTTP {response.status_code}"}
+
+        json_data = response_resolve(response, callback_context, self.account_name)
+        if not json_data or not json_data.get('success'):
+            error_msg = json_data.get('message', 'Unknown error') if json_data else 'Invalid response'
+            print(f"❌ {self.account_name}: OAuth callback failed: {error_msg}")
+            return False, {"error": f"OAuth callback failed: {error_msg}"}
+
+        user_data = json_data.get('data', {})
+        api_user = user_data.get('id')
+        if not api_user:
+            print(f"❌ {self.account_name}: No user ID in callback response")
+            return False, {"error": "No user ID in OAuth callback response"}
+
+        print(f"✅ {self.account_name}: Got api_user from callback: {api_user}")
+        user_cookies = {cookie.name: cookie.value for cookie in response.cookies.jar}
+        print(f"ℹ️ {self.account_name}: Extracted {len(user_cookies)} user cookies")
+        merged_cookies = {**bypass_cookies, **user_cookies}
+        return await self.check_in_with_cookies(merged_cookies, updated_headers, api_user, impersonate)
 
     async def check_in_with_linuxdo(
         self,
@@ -1298,50 +1326,17 @@ class CheckIn:
                 # 构建带参数的回调 URL
                 base_url = self.provider_config.get_linuxdo_auth_url()
                 callback_url = f"{base_url}?{urlencode(result_data, doseq=True)}"
-                print(f"ℹ️ {self.account_name}: Callback URL: {callback_url}")
                 try:
-                    # 将 Camoufox 格式的 cookies 转换为 curl_cffi 格式
-                    auth_cookies_list = auth_state_result.get("cookies", [])
-                    for cookie_dict in auth_cookies_list:
-                        session.cookies.set(cookie_dict["name"], cookie_dict["value"])
-
-                    # 如果 OAuth 登录返回了 browser_headers，用它更新 common_headers
-                    updated_headers = common_headers.copy()
-                    if oauth_browser_headers:
-                        print(f"ℹ️ {self.account_name}: Updating headers with OAuth browser fingerprint")
-                        updated_headers.update(oauth_browser_headers)
-
-                    response = session.get(callback_url, headers=updated_headers, timeout=30)
-
-                    if response.status_code == 200:
-                        json_data = response_resolve(response, "linuxdo_oauth_callback", self.account_name)
-                        if json_data and json_data.get("success"):
-                            user_data = json_data.get("data", {})
-                            api_user = user_data.get("id")
-
-                            if api_user:
-                                print(f"✅ {self.account_name}: Got api_user from callback: {api_user}")
-
-                                # 提取 cookies
-                                user_cookies = {}
-                                for cookie in response.cookies.jar:
-                                    user_cookies[cookie.name] = cookie.value
-
-                                print(
-                                    f"ℹ️ {self.account_name}: Extracted {len(user_cookies)} user cookies: {list(user_cookies.keys())}"
-                                )
-                                merged_cookies = {**bypass_cookies, **user_cookies}
-                                return await self.check_in_with_cookies(merged_cookies, updated_headers, api_user, impersonate)
-                            else:
-                                print(f"❌ {self.account_name}: No user ID in callback response")
-                                return False, {"error": "No user ID in OAuth callback response"}
-                        else:
-                            error_msg = json_data.get("message", "Unknown error") if json_data else "Invalid response"
-                            print(f"❌ {self.account_name}: OAuth callback failed: {error_msg}")
-                            return False, {"error": f"OAuth callback failed: {error_msg}"}
-                    else:
-                        print(f"❌ {self.account_name}: OAuth callback HTTP {response.status_code}")
-                        return False, {"error": f"OAuth callback HTTP {response.status_code}"}
+                    return await self._handle_oauth_callback_via_http(
+                        session=session,
+                        callback_url=callback_url,
+                        callback_context="linuxdo_oauth_callback",
+                        auth_state_cookies=auth_state_result.get("cookies", []),
+                        common_headers=common_headers,
+                        oauth_browser_headers=oauth_browser_headers,
+                        bypass_cookies=bypass_cookies,
+                        impersonate=impersonate,
+                    )
                 except Exception as callback_err:
                     print(f"❌ {self.account_name}: Error calling OAuth callback: {callback_err}")
                     return False, {"error": f"OAuth callback error: {callback_err}"}
@@ -1355,8 +1350,31 @@ class CheckIn:
         finally:
             session.close()
 
-    async def execute(self) -> list[tuple[str, bool, dict | None]]:
-        """为单个账号执行签到操作，支持多种认证方式"""
+    @staticmethod
+    def _build_attempt_result(auth_method: str, success: bool, payload: dict | None) -> AuthAttemptResult:
+        payload = payload or {}
+        user_state = None
+        error = None
+
+        if success and payload.get('success'):
+            try:
+                user_state = UserState.from_payload(payload)
+            except Exception:
+                error = 'Invalid user state payload'
+                success = False
+        elif not success:
+            error = payload.get('error', 'Unknown error')
+
+        return AuthAttemptResult(
+            auth_method=auth_method,
+            success=success and user_state is not None,
+            error=error,
+            user_state=user_state,
+            meta={'raw': payload},
+        )
+
+    async def execute(self) -> AccountRunResult:
+        """为单个账号执行奖励流程，支持多种认证方式"""
         print(f"\n\n⏳ Starting to process {self.account_name}")
 
         bypass_cookies = {}
@@ -1447,7 +1465,8 @@ class CheckIn:
         cookies_data = self.account_config.cookies
         github_accounts = self.account_config.github  # 现在是 List[OAuthAccountConfig] 类型
         linuxdo_accounts = self.account_config.linux_do  # 现在是 List[OAuthAccountConfig] 类型
-        results = []
+        attempts: list[AuthAttemptResult] = []
+        run_result = AccountRunResult(account_name=self.account_name, provider_name=self.provider_config.name)
 
         # 尝试 cookies 认证
         if cookies_data:
@@ -1456,25 +1475,27 @@ class CheckIn:
                 user_cookies = parse_cookies(cookies_data)
                 if not user_cookies:
                     print(f"❌ {self.account_name}: Invalid cookies format")
-                    results.append(("cookies", False, {"error": "Invalid cookies format"}))
+                    attempts.append(self._build_attempt_result('cookies', False, {'error': 'Invalid cookies format'}))
                 else:
                     api_user = self.account_config.api_user
                     if not api_user:
                         print(f"❌ {self.account_name}: API user identifier not found for cookies")
-                        results.append(("cookies", False, {"error": "API user identifier not found"}))
+                        attempts.append(
+                            self._build_attempt_result('cookies', False, {'error': 'API user identifier not found'})
+                        )
                     else:
                         # 使用已有 cookies 执行签到，传入公用请求头
                         all_cookies = {**bypass_cookies, **user_cookies}
                         success, user_info = await self.check_in_with_cookies(all_cookies, common_headers, api_user)
                         if success:
                             print(f"✅ {self.account_name}: Cookies authentication successful")
-                            results.append(("cookies", True, user_info))
+                            attempts.append(self._build_attempt_result('cookies', True, user_info))
                         else:
                             print(f"❌ {self.account_name}: Cookies authentication failed")
-                            results.append(("cookies", False, user_info))
+                            attempts.append(self._build_attempt_result('cookies', False, user_info))
             except Exception as e:
                 print(f"❌ {self.account_name}: Cookies authentication error: {e}")
-                results.append(("cookies", False, {"error": str(e)}))
+                attempts.append(self._build_attempt_result('cookies', False, {'error': str(e)}))
 
         # 尝试 GitHub 认证（支持多个账号）
         if github_accounts:
@@ -1486,7 +1507,11 @@ class CheckIn:
                     password = github_account.password
                     if not username or not password:
                         print(f"❌ {self.account_name}: Incomplete GitHub account information")
-                        results.append((account_label, False, {"error": "Incomplete GitHub account information"}))
+                        attempts.append(
+                            self._build_attempt_result(
+                                account_label, False, {'error': 'Incomplete GitHub account information'}
+                            )
+                        )
                     else:
                         # 使用 GitHub 账号执行签到，传入公用请求头
                         success, user_info = await self.check_in_with_github(
@@ -1494,13 +1519,13 @@ class CheckIn:
                         )
                         if success:
                             print(f"✅ {self.account_name}: GitHub authentication successful ({github_account.username})")
-                            results.append((account_label, True, user_info))
+                            attempts.append(self._build_attempt_result(account_label, True, user_info))
                         else:
                             print(f"❌ {self.account_name}: GitHub authentication failed ({github_account.username})")
-                            results.append((account_label, False, user_info))
+                            attempts.append(self._build_attempt_result(account_label, False, user_info))
                 except Exception as e:
                     print(f"❌ {self.account_name}: GitHub authentication error ({github_account.username}): {e}")
-                    results.append((account_label, False, {"error": str(e)}))
+                    attempts.append(self._build_attempt_result(account_label, False, {'error': str(e)}))
 
         # 尝试 Linux.do 认证（支持多个账号）
         if linuxdo_accounts:
@@ -1512,7 +1537,11 @@ class CheckIn:
                     password = linuxdo_account.password
                     if not username or not password:
                         print(f"❌ {self.account_name}: Incomplete Linux.do account information")
-                        results.append((account_label, False, {"error": "Incomplete Linux.do account information"}))
+                        attempts.append(
+                            self._build_attempt_result(
+                                account_label, False, {'error': 'Incomplete Linux.do account information'}
+                            )
+                        )
                     else:
                         # 使用 Linux.do 账号执行签到，传入公用请求头
                         success, user_info = await self.check_in_with_linuxdo(
@@ -1523,29 +1552,31 @@ class CheckIn:
                         )
                         if success:
                             print(f"✅ {self.account_name}: Linux.do authentication successful ({linuxdo_account.username})")
-                            results.append((account_label, True, user_info))
+                            attempts.append(self._build_attempt_result(account_label, True, user_info))
                         else:
                             print(f"❌ {self.account_name}: Linux.do authentication failed ({linuxdo_account.username})")
-                            results.append((account_label, False, user_info))
+                            attempts.append(self._build_attempt_result(account_label, False, user_info))
                 except Exception as e:
                     print(f"❌ {self.account_name}: Linux.do authentication error ({linuxdo_account.username}): {e}")
-                    results.append((account_label, False, {"error": str(e)}))
+                    attempts.append(self._build_attempt_result(account_label, False, {'error': str(e)}))
 
-        if not results:
+        if not attempts:
             print(f"❌ {self.account_name}: No valid authentication method found in configuration")
-            return []
+            run_result.system_error = 'No valid authentication method found in configuration'
+            return run_result
 
         # 输出最终结果
         print(f"\n📋 {self.account_name} authentication results:")
         successful_count = 0
-        for auth_method, success, user_info in results:
-            status = "✅" if success else "❌"
-            print(f"  {status} {auth_method} authentication")
-            if success:
+        for attempt in attempts:
+            status = '✅' if attempt.success else '❌'
+            print(f"  {status} {attempt.auth_method} authentication")
+            if attempt.success:
                 successful_count += 1
 
-        print(f"\n🎯 {self.account_name}: {successful_count}/{len(results)} authentication methods successful")
+        print(f"\n🎯 {self.account_name}: {successful_count}/{len(attempts)} authentication methods successful")
 
-        return results
+        run_result.attempts = attempts
+        return run_result
 
    
