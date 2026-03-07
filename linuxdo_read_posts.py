@@ -90,6 +90,7 @@ class ReadAccountResult:
     error_topics: int = 0
     challenge_topics: int = 0
     discovery_counts: dict[str, int] = field(default_factory=dict)
+    discovery_debug: dict[str, dict] = field(default_factory=dict)
 
 
 def classify_read_error(error: Exception | str) -> str:
@@ -386,15 +387,19 @@ class LinuxDoReadPosts:
         collected: list[tuple[int, str]] = []
         seen_ids: set[int] = set()
         discovery_counts: dict[str, int] = {}
+        self._last_discovery_debug: dict[str, dict] = {}
 
         for candidate_page in candidate_pages:
             try:
                 print(f'ℹ️ {self.username}: Discovering topics from {candidate_page}')
                 await page.goto(candidate_page, wait_until='domcontentloaded')
                 try:
-                    await page.wait_for_selector('a[href*="/t/"]', timeout=10000)
+                    await page.wait_for_selector(
+                        'tbody.topic-list-body tr.topic-list-item, .topic-list, .discovery-list-container, a[href*="/t/"]',
+                        timeout=12000,
+                    )
                 except Exception:
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(3000)
 
                 hrefs = await page.evaluate(
                     """() => {
@@ -431,8 +436,24 @@ class LinuxDoReadPosts:
                     }"""
                 )
                 page_candidates = extract_topic_candidates(hrefs)
+                if not page_candidates:
+                    await page.evaluate('window.scrollBy(0, window.innerHeight)')
+                    await page.wait_for_timeout(1500)
+                    hrefs = await page.evaluate(
+                        """() => Array.from(document.querySelectorAll('a[href*="/t/"]'))
+                        .map(a => a.getAttribute('href') || '')
+                        """
+                    )
+                    page_candidates = extract_topic_candidates(hrefs)
+
                 page_key = candidate_page.rsplit('/', 1)[-1]
                 discovery_counts[page_key] = len(page_candidates)
+                self._last_discovery_debug[page_key] = await self._collect_discovery_debug(page, page_key, len(page_candidates))
+
+                if len(page_candidates) == 0:
+                    await save_page_content_to_file(page, f'discovery_{page_key}_empty', self.username, prefix='linuxdo')
+                    await take_screenshot(page, f'discovery_{page_key}_empty', self.username)
+
                 for topic_id, topic_url in page_candidates:
                     if topic_id in seen_ids:
                         continue
@@ -445,9 +466,46 @@ class LinuxDoReadPosts:
                 print(f'⚠️ {self.username}: Failed to discover topics from {candidate_page}: {e}')
                 page_key = candidate_page.rsplit('/', 1)[-1]
                 discovery_counts[page_key] = 0
+                self._last_discovery_debug[page_key] = {'error': str(e)}
 
         print(f'ℹ️ {self.username}: Discovered {len(collected)} topic candidates')
         return collected, discovery_counts
+
+    async def _collect_discovery_debug(self, page, source_key: str, candidate_count: int) -> dict:
+        """采集 discovery 页调试信息。"""
+        try:
+            title = await page.title()
+        except Exception:
+            title = '<unknown>'
+
+        try:
+            counts = await page.evaluate(
+                """() => {
+                    return {
+                        total_links: document.querySelectorAll('a').length,
+                        topic_links: document.querySelectorAll('a[href*="/t/"]').length,
+                        title_links: document.querySelectorAll('a.title').length,
+                        topic_rows: document.querySelectorAll('tr.topic-list-item').length,
+                    };
+                }"""
+            )
+        except Exception:
+            counts = {}
+
+        challenge_detected = ('challenge' in (page.url or '').lower()) or ('just a moment' in title.lower())
+        debug_info = {
+            'url': page.url,
+            'title': title,
+            'challenge_detected': challenge_detected,
+            'candidate_count': candidate_count,
+        }
+        debug_info.update(counts)
+        print(
+            f"ℹ️ {self.username}: Discovery debug [{source_key}] "
+            f"url={page.url}, title={title}, candidates={candidate_count}, "
+            f"topic_links={counts.get('topic_links', 'n/a')}, topic_rows={counts.get('topic_rows', 'n/a')}"
+        )
+        return debug_info
 
     async def _visit_topic(self, page, topic_id: int) -> TopicVisitResult:
         topic_url = f'https://linux.do/t/topic/{topic_id}'
@@ -621,6 +679,7 @@ class LinuxDoReadPosts:
                 result.discovered_candidates = discovered_candidates
                 result.used_id_fallback = used_id_fallback
                 result.discovery_counts = discovery_counts
+                result.discovery_debug = dict(self._last_discovery_debug)
 
                 if enable_id_fallback and should_retry_from_base(
                     state, base_topic_id, len([visit for visit in topic_visits if visit.status == 'valid'])
@@ -643,6 +702,7 @@ class LinuxDoReadPosts:
                     result.discovered_candidates = discovered_candidates
                     result.used_id_fallback = used_id_fallback
                     result.discovery_counts = discovery_counts
+                    result.discovery_debug = dict(self._last_discovery_debug)
 
                 result.topic_visits = topic_visits
                 result.topics_attempted = len(topic_visits)
@@ -759,7 +819,10 @@ async def main() -> int:
                 f"sources={result.discovery_counts}"
             )
         else:
-            notification_lines.append(f"❌ {result.username}: {result.error or 'Unknown error'} ({duration})")
+            notification_lines.append(
+                f"❌ {result.username}: {result.error or 'Unknown error'} ({duration})\n"
+                f"   discovered={result.discovered_candidates}, sources={result.discovery_counts}"
+            )
 
     notification_lines.append('')
     notification_lines.append(f'📊 Total estimated pages read: {total_pages}')
