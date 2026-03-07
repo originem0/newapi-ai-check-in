@@ -88,14 +88,18 @@ jobs:
       with:
         path: |
           linuxdo_reads
-        key: linuxdo-reads-${{ hashFiles('linuxdo_reads/*.txt') }}
+        key: linuxdo-reads-${{ hashFiles('linuxdo_reads/*.json') }}
         restore-keys: |
           linuxdo-reads-
 
     - name: 执行阅读帖子
       env:
-        ACCOUNTS: ${{ secrets.ACCOUNTS_LINUX_DO }}
+        ACCOUNTS_LINUX_DO: ${{ secrets.ACCOUNTS_LINUX_DO }}
         LINUXDO_BASE_TOPIC_ID: ${{ secrets.LINUXDO_BASE_TOPIC_ID }}
+        LINUXDO_MAX_POSTS: ${{ secrets.LINUXDO_MAX_POSTS }}
+        LINUXDO_MAX_TOPIC_ATTEMPTS: ${{ secrets.LINUXDO_MAX_TOPIC_ATTEMPTS }}
+        LINUXDO_MAX_RUNTIME_SECONDS: ${{ secrets.LINUXDO_MAX_RUNTIME_SECONDS }}
+        ALLOW_INTERACTIVE_AUTH: 'false'
         DINGDING_WEBHOOK: ${{ secrets.DINGDING_WEBHOOK }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
@@ -125,12 +129,12 @@ jobs:
         key: storage-state-${{ hashFiles('storage-states/*.json') }}
 
     - name: 保存帖子ID缓存
-      if: hashFiles('linuxdo_reads/*.txt') != ''
+      if: hashFiles('linuxdo_reads/*.json') != ''
       uses: actions/cache/save@v4
       with:
         path: |
           linuxdo_reads
-        key: linuxdo-reads-${{ hashFiles('linuxdo_reads/*.txt') }}
+        key: linuxdo-reads-${{ hashFiles('linuxdo_reads/*.json') }}
 
     - name: 保存日志
       if: always()

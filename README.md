@@ -8,6 +8,7 @@
 - 通过转盘 / 抽奖获得奖励
 - 通过 CDK 自动充值
 - cookies / GitHub / Linux.do 多种认证方式
+- Linux.do 读帖自动化任务
 
 > 注意：不同 provider 的奖励方式不同，并不都是“签到”。  
 > 例如：`x666 / 薄荷 API` 走的是 **up.x666.me 抽奖自动到账**，不是 `/api/user/checkin`。
@@ -73,6 +74,22 @@
 - 获取 CDK
 - 按顺序执行充值
 - 失败则停止后续充值
+
+### 5) Linux.do 读帖自动化
+
+仓库还包含独立的 Linux.do 自动读帖任务：
+
+- 尝试恢复 Linux.do 登录态
+- 自动浏览一批 topic
+- 输出页面行为结果
+- 严格区分：
+  - 页面行为成功
+  - 业务验证成功
+  - 无法验证（`uncertain`）
+  - 基础设施失败（`infra_failed`）
+
+> 重要：  
+> 当前版本**不能稳定从服务端证明“读帖任务已完成”**，所以读帖任务即使访问了一批有效帖子，也默认只会记为 `uncertain`，而不是完全成功。
 
 ---
 
@@ -360,6 +377,42 @@ DEBUG_ARTIFACTS=true
 - 支持 Cloudflare 挑战自动求解
 - 若自动求解失败且不允许交互式认证，会显式失败
 
+### Linux.do 读帖任务
+
+独立 workflow：
+
+- `.github/workflows/linuxdo-read.yml`
+
+当前实现要点：
+
+- 读取 `ACCOUNTS_LINUX_DO`
+- 维护独立的 topic 状态缓存
+- 使用更严格的结果模型：
+  - `uncertain`
+  - `failed`
+  - `infra_failed`
+
+#### 相关环境变量
+
+- `ACCOUNTS_LINUX_DO`
+- `LINUXDO_BASE_TOPIC_ID`
+- `LINUXDO_MAX_POSTS`
+- `LINUXDO_MAX_TOPIC_ATTEMPTS`
+- `LINUXDO_MAX_RUNTIME_SECONDS`
+- `ALLOW_INTERACTIVE_AUTH`
+
+#### 读帖任务的结果解释
+
+- `uncertain`
+  - 页面访问和滚动行为完成
+  - 但无法严格证明服务端已记录“读帖任务完成”
+- `failed`
+  - 没有读到有效帖子，或登录失败
+- `infra_failed`
+  - 网络、站点可达性、基础设施层失败
+
+这比旧版“自认为成功”更保守，也更诚实。
+
 ---
 
 ## 通知
@@ -424,6 +477,20 @@ uv sync --dev
 python -m camoufox fetch
 uv run pytest
 uv run main.py
+```
+
+### 本地运行 Linux.do 读帖任务
+
+```bash
+uv sync --dev
+python -m camoufox fetch
+uv run python -u linuxdo_read_posts.py
+```
+
+如果你要本地手动处理 challenge / 登录交互，可以临时打开：
+
+```bash
+ALLOW_INTERACTIVE_AUTH=true
 ```
 
 ---
